@@ -12,7 +12,7 @@ cargo build --release
 cargo run --release --bin breakpoints -- <gff_file> [--no-dup] [--seqid2genome <file>]
 cargo run --release --bin breakpoints -- <original_gff> <new_gff> [--no-dup] [--seqid2genome <file>] [--breakpoints <file>]
 cargo run --release --bin gff -- info <gff_file>
-cargo run --release --bin gff2seq -- <gff_file> [--seqid2genome <file>]
+cargo run --release --bin gff -- seq <gff_file> [--seqid2genome <file>]
 cargo run --release --bin seqid2genome -- <inputs...>
 
 # Run tests
@@ -35,8 +35,9 @@ This is a Rust crate (`allgasnobreakpoints`) for analyzing genomic breakpoints f
 ### Binaries
 
 - **breakpoints**: With one GFF, computes breakpoints across all sequences (parallel pairwise comparison). Outputs pairs of marker IDs that form breakpoint adjacencies. With two GFFs, compares original vs new, computing a "cover" relationship where new markers contain original markers based on coordinate overlap. Accepts optional `--breakpoints` file to provide precomputed breakpoints instead of computing from the original GFF.
-- **gff**: Utility with `info` subcommand for GFF statistics (genomes, seqids, types, sorting status, contiguity).
-- **gff2seq**: Converts GFF to a tab-separated format: `genome\tseqid\tmarker_list`
+- **gff**: Utility with subcommands:
+  - `info`: GFF statistics (genomes, seqids, types, sorting status, contiguity)
+  - `seq`: Converts GFF to a tab-separated format: `genome\tseqid\tmarker_list`
 - **seqid2genome**: Generates seqid-to-genome mapping from GFF, FASTA, or list-of-FASTA files.
 
 ### Key Algorithms

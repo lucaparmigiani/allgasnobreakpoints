@@ -56,11 +56,11 @@ gff info markers.gff3
 
 Shows genomes, chromosomes, feature types, whether it's sorted, etc.
 
-### gff2seq
+### gff seq
 
 Convert GFF to simple tab-separated format:
 ```bash
-gff2seq markers.gff3 > sequences.tsv
+gff seq markers.gff3 > sequences.tsv
 ```
 
 Output: `genome  seqid  id1+,id2-,id3-,id4+...`

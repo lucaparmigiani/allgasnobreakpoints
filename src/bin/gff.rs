@@ -2,7 +2,9 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{self, BufRead, BufReader, Write};
+use std::path::PathBuf;
+use allgasnobreakpoints::gff::{load_genomes, load_seqid2genome, Genomes};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -16,12 +18,18 @@ enum Command {
     Info {
         file_gff: String,
     },
+    Seq {
+        file_gff: String,
+        #[arg(long)]
+        seqid2genome: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Info { file_gff } => info(&file_gff),
+        Command::Seq { file_gff, seqid2genome } => seq(&file_gff, seqid2genome),
     }
 }
 
@@ -193,4 +201,41 @@ fn join_sorted(set: &HashSet<String>) -> String {
     let mut v: Vec<String> = set.iter().cloned().collect();
     v.sort();
     v.join(",")
+}
+
+fn seq(file_gff: &str, seqid2genome: Option<PathBuf>) -> Result<()> {
+    let seqid_to_genome = match seqid2genome.as_ref() {
+        Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
+        None => None,
+    };
+
+    let (mut genomes, _seqid_to_genome_out) = load_genomes(file_gff, seqid_to_genome.as_ref(), true)
+        .with_context(|| "Failed to parse the GFF")?;
+
+    write_genomes(&mut genomes)?;
+
+    Ok(())
+}
+
+fn write_genomes(genomes: &mut Genomes) -> Result<()> {
+    let mut out = io::BufWriter::new(io::stdout().lock());
+    let mut genome_names: Vec<String> = genomes.keys().cloned().collect();
+    genome_names.sort();
+    for genome in genome_names {
+        if let Some(seqs) = genomes.get(&genome) {
+            for (seqid, seq) in seqs.iter() {
+                write!(out, "{genome}\t{seqid}\t")?;
+                let mut first = true;
+                for &(id, strand) in &seq.markers {
+                    if !first {
+                        out.write_all(b",")?;
+                    }
+                    first = false;
+                    write!(out, "{id}{strand}")?;
+                }
+                out.write_all(b"\n")?;
+            }
+        }
+    }
+    Ok(())
 }
