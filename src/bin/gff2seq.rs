@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use obscuring::gff::{load_genomes, load_seqid2genome, Genomes};
+use allgasnobreakpoints::gff::{load_genomes, load_seqid2genome, Genomes};
 use std::io::{self, Write};
 use std::path::PathBuf;
 

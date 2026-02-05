@@ -24,7 +24,7 @@ cargo check
 
 ## Architecture
 
-This is a Rust crate (`obscuring`) for analyzing genomic breakpoints from GFF3 files containing syntenic markers (type `SO:0000856`).
+This is a Rust crate (`allgasnobreakpoints`) for analyzing genomic breakpoints from GFF3 files containing syntenic markers (type `SO:0000856`).
 
 ### Core Data Structures (src/gff.rs)
 

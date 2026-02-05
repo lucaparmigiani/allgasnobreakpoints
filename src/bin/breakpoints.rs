@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
-use obscuring::gff::*;
+use allgasnobreakpoints::gff::*;
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -94,15 +94,16 @@ fn run_two_gffs(
     remove_duplicates(&mut genomes_original, &dup_orig);
     eprintln!("duplicated (original): {}", dup_orig.len());
 
-    let dup_new = duplicated_ids_by_genome(&genomes_new);
-    remove_duplicates(&mut genomes_new, &dup_new);
-    eprintln!("duplicated (new): {}", dup_new.len());
-
     eprintln!(
         "Loaded original: {} genome(s), {} sequence(s)",
         genomes_original.len(),
         genomes_original.values().map(|g| g.len()).sum::<usize>(),
     );
+
+    let dup_new = duplicated_ids_by_genome(&genomes_new);
+    remove_duplicates(&mut genomes_new, &dup_new);
+    eprintln!("duplicated (new): {}", dup_new.len());
+
     eprintln!(
         "Loaded new: {} genome(s), {} sequence(s)",
         genomes_new.len(),
