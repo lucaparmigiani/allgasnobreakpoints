@@ -228,14 +228,14 @@ fn print_genomes_new_cover(genomes_new_blocks: &GenomesBlocks) -> Result<()>{
                     write!(out, "[")?;
                     for (id, strand) in block.iter(){
                         if !first {
-                            out.write_all(b",")?;
+                            out.write(b",")?;
                         }
                         first = false;
                         write!(out, "{id}{strand}")?;
                     }
                     write!(out, "]")?;
                 }
-                out.write_all(b"\n")?;
+                out.write(b"\n")?;
             }
         }
     }

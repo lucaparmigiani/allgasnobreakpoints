@@ -228,12 +228,12 @@ fn write_genomes(genomes: &mut Genomes) -> Result<()> {
                 let mut first = true;
                 for &(id, strand) in &seq.markers {
                     if !first {
-                        out.write_all(b",")?;
+                        out.write(b",")?;
                     }
                     first = false;
                     write!(out, "{id}{strand}")?;
                 }
-                out.write_all(b"\n")?;
+                out.write(b"\n")?;
             }
         }
     }
