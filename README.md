@@ -1,11 +1,29 @@
-# allgasnobreakpoints
+# All Gas No Breakpoints!
 
-Find structural rearrangements between genomes by detecting breakpoints in syntenic marker arrangements.
+Utiliy tools to extract statics from GFF files regarding rearrangements/breakpoints. 
 
 ## Install
 
 ```bash
 cargo install --release .
+```
+
+## File formats
+
+Your GFF3 needs:
+- Feature type `SO:0000856` (syntenic markers)
+- `ID=123` attribute with numeric IDs
+- Optional `genome=species_name` attribute
+
+Example:
+```
+chr1  .  SO:0000856  1000  2000  .  +  .  ID=42;genome=species_A
+```
+
+Mapping files look like:
+```
+genome_A: chr1, chr2, chr3
+genome_B: scaffold_1, scaffold_2
 ```
 
 ## Tools
@@ -45,7 +63,7 @@ Convert GFF to simple tab-separated format:
 gff2seq markers.gff3 > sequences.tsv
 ```
 
-Output: `genome  seqid  marker1,marker2,marker3,...`
+Output: `genome  seqid  id1+,id2-,id3-,id4+...`
 
 Negative IDs mean reverse strand.
 
@@ -53,7 +71,9 @@ Negative IDs mean reverse strand.
 
 Generate a mapping file from your inputs:
 ```bash
-seqid2genome *.gff3 *.fasta > mapping.txt
+seqid2genome file.gff > mapping.txt
+#or
+seqid2genome f1.fasta f2.fasta ... > mapping.txt
 ```
 
 Works with GFF3, FASTA, or text files listing FASTA paths.
@@ -61,34 +81,12 @@ Works with GFF3, FASTA, or text files listing FASTA paths.
 ## Quick start
 
 ```bash
-# Build everything
-cargo build --release
+# Check what you're working with
+gff info mydata.gff
 
-# Get genome mappings
-./target/release/seqid2genome mydata.gff3 > mapping.txt
+# (optional) Get genome mappings
+seqid2genome mydata.gff > mapping.txt
 
 # Find breakpoints
-./target/release/breakpoints mydata.gff3 --seqid2genome mapping.txt > breaks.txt
-
-# Check what you're working with
-./target/release/gff info mydata.gff3
+breakpoints mydata.gff --seqid2genome mapping.txt > breaks.txt
 ```
-
-## File formats
-
-Your GFF3 needs:
-- Feature type `SO:0000856` (syntenic markers)
-- `ID=123` attribute with numeric IDs
-- Optional `genome=species_name` attribute
-
-Example:
-```
-chr1  .  SO:0000856  1000  2000  .  +  .  ID=42;genome=species_A
-```
-
-Mapping files look like:
-```
-genome_A: chr1, chr2, chr3
-genome_B: scaffold_1, scaffold_2
-```
-
