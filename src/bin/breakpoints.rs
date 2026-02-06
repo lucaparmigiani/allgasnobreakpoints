@@ -132,7 +132,7 @@ fn run_two_gffs(
         genomes_new_blocks.values().map(|g| g.len()).sum::<usize>(),
     );
 
-    //print_genomes_new_cover(&genomes_new_blocks)?;
+    //print_genomes_new_blocks(&genomes_new_blocks)?;
 
     let false_positives = compute_false_positive_breakpoints(&genomes_new, &genomes_new_blocks, &breakpoints);
 
@@ -215,7 +215,7 @@ fn collect_false_positives(
 }
 
 #[allow(dead_code)]
-fn print_genomes_new_cover(genomes_new_blocks: &GenomesBlocks) -> Result<()>{
+fn print_genomes_new_blocks(genomes_new_blocks: &GenomesBlocks) -> Result<()>{
     let mut out = io::BufWriter::new(io::stdout().lock());
     let mut genome_names: Vec<String> = genomes_new_blocks.keys().cloned().collect();
     genome_names.sort();
@@ -250,11 +250,11 @@ fn compute_genome_blocks(
         .par_iter()
         .map(|(genome_name_new, seqid_table)| {
             let genome_ori = &genomes_original[genome_name_new];
-            let seqid_cover: HashMap<String, Vec<Vec<(usize, char)>>> = seqid_table
+            let seqid_blocks: HashMap<String, Vec<Vec<(usize, char)>>> = seqid_table
                 .par_iter()
                 .map(|(seqid_new, seq_new)| {
                     let seq_ori = &genome_ori[seqid_new];
-                    let mut covers = Vec::with_capacity(seq_new.len());
+                    let mut blocks = Vec::with_capacity(seq_new.len());
                     let mut j = 0; //ori
                     for i in 0..seq_new.len() {
                         let mut contained = Vec::new();
@@ -265,12 +265,12 @@ fn compute_genome_blocks(
                             contained.push(seq_ori.markers[j]);
                             j += 1;
                         }
-                        covers.push(contained);
+                        blocks.push(contained);
                     }
-                    (seqid_new.clone(), covers)
+                    (seqid_new.clone(), blocks)
                 })
                 .collect();
-            (genome_name_new.clone(), seqid_cover)
+            (genome_name_new.clone(), seqid_blocks)
         })
         .collect()
 }
