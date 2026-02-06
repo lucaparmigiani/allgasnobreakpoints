@@ -23,6 +23,11 @@ enum Command {
         #[arg(long)]
         seqid2genome: Option<PathBuf>,
     },
+    Dup {
+        file_gff: String,
+        #[arg(long)]
+        seqid2genome: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -30,6 +35,7 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Info { file_gff } => info(&file_gff),
         Command::Seq { file_gff, seqid2genome } => seq(&file_gff, seqid2genome),
+        Command::Dup { file_gff, seqid2genome } => dup(&file_gff, seqid2genome),
     }
 }
 
@@ -237,5 +243,55 @@ fn write_genomes(genomes: &mut Genomes) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+fn dup(file_gff: &str, seqid2genome: Option<PathBuf>) -> Result<()> {
+    let seqid_to_genome = match seqid2genome.as_ref() {
+        Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
+        None => None,
+    };
+
+    let (genomes, _seqid_to_genome_out) = load_genomes(file_gff, seqid_to_genome.as_ref(), false)
+        .with_context(|| "Failed to parse the GFF")?;
+
+    let mut duplicates: HashMap<usize, Vec<String>> = HashMap::new();
+
+    for (genome_name, seqs) in &genomes {
+        let mut seen: HashSet<usize> = HashSet::new();
+        let mut genome_dups: HashSet<usize> = HashSet::new();
+
+        for seq in seqs.values() {
+            for &(id, _) in &seq.markers {
+                if !seen.insert(id) {
+                    genome_dups.insert(id);
+                }
+            }
+        }
+
+        for &dup_id in &genome_dups {
+            duplicates
+                .entry(dup_id)
+                .or_default()
+                .push(genome_name.clone());
+        }
+    }
+
+    let mut out = io::BufWriter::new(io::stdout().lock());
+    let mut ids: Vec<usize> = duplicates.keys().copied().collect();
+    ids.sort();
+
+    for id in ids {
+        if let Some(genome_list) = duplicates.get(&id) {
+            let mut sorted_genomes = genome_list.clone();
+            sorted_genomes.sort();
+            write!(out, "{}", id)?;
+            for genome in sorted_genomes {
+                write!(out, " {}", genome)?;
+            }
+            writeln!(out)?;
+        }
+    }
+
     Ok(())
 }
