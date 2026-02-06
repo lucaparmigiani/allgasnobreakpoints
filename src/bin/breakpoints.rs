@@ -189,13 +189,13 @@ fn print_false_positives_debug(
         writeln!(out, "# False positive breakpoint between markers {} and {}", info.marker_x.0, info.marker_y.0)?;
         writeln!(out, "# Genomes: {} (seqid: {}) <-> {} (seqid: {})",
             info.genome_a, info.seqid_a, info.genome_b, info.seqid_b)?;
-        write!(out, "# Block A: [")?;
+        write!(out, "# Block X: [")?;
         for (i, (id, strand)) in info.block_x.iter().enumerate() {
             if i > 0 { write!(out, ", ")?; }
             write!(out, "{}{}", id, strand)?;
         }
         writeln!(out, "]")?;
-        write!(out, "# Block B: [")?;
+        write!(out, "# Block Y: [")?;
         for (i, (id, strand)) in info.block_y.iter().enumerate() {
             if i > 0 { write!(out, ", ")?; }
             write!(out, "{}{}", id, strand)?;
