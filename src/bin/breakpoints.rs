@@ -20,6 +20,13 @@ struct FalsePositiveDebugInfo {
     block_b: Vec<(usize, char)>,
 }
 
+struct DebugContext<'a> {
+    genome_a: &'a str,
+    seqid_a: &'a str,
+    genome_b: &'a str,
+    seqid_b: &'a str,
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, arg_required_else_help = true)]
 struct Args {
@@ -293,33 +300,34 @@ fn process_genome_pair(
 
             let breakpoints_signed = breakpoints_from_pair_of_seq(&seq_a.markers, &seq_b.markers);
 
-            if let Some(ref mut debug_vec) = debug_info {
-                collect_false_positives_debug(
-                    genome_name_a, seqid_a, &seq_a.markers, blocks_seq_a,
-                    &breakpoints_signed, breakpoints,
-                    false_positives,
-                    genome_name_b, seqid_b,
-                    debug_vec,
-                );
-                collect_false_positives_debug(
-                    genome_name_b, seqid_b, &seq_b.markers, blocks_seq_b,
-                    &breakpoints_signed, breakpoints,
-                    false_positives,
-                    genome_name_a, seqid_a,
-                    debug_vec,
-                );
-            } else {
-                collect_false_positives(
-                    &seq_a.markers, blocks_seq_a,
-                    &breakpoints_signed, breakpoints,
-                    false_positives,
-                );
-                collect_false_positives(
-                    &seq_b.markers, blocks_seq_b,
-                    &breakpoints_signed, breakpoints,
-                    false_positives,
-                );
-            }
+            let ctx_a = DebugContext {
+                genome_a: genome_name_a,
+                seqid_a,
+                genome_b: genome_name_b,
+                seqid_b,
+            };
+            let ctx_b = DebugContext {
+                genome_a: genome_name_b,
+                seqid_a: seqid_b,
+                genome_b: genome_name_a,
+                seqid_b: seqid_a,
+            };
+
+            let debug_a = debug_info.as_mut().map(|vec| (vec as &mut _, &ctx_a));
+            collect_false_positives(
+                &seq_a.markers, blocks_seq_a,
+                &breakpoints_signed, breakpoints,
+                false_positives,
+                debug_a,
+            );
+
+            let debug_b = debug_info.as_mut().map(|vec| (vec as &mut _, &ctx_b));
+            collect_false_positives(
+                &seq_b.markers, blocks_seq_b,
+                &breakpoints_signed, breakpoints,
+                false_positives,
+                debug_b,
+            );
         }
     }
 }
@@ -330,6 +338,7 @@ fn collect_false_positives(
     breakpoints_signed: &HashSet<((usize, char), (usize, char))>,
     breakpoints: &HashSet<(usize, usize)>,
     false_positives: &mut HashSet<(usize, usize)>,
+    mut debug: Option<(&mut Vec<FalsePositiveDebugInfo>, &DebugContext)>,
 ) {
     for (i, window) in markers.windows(2).enumerate() {
         let a = window[0];
@@ -350,49 +359,13 @@ fn collect_false_positives(
             if is_false_positive {
                 let pair = if a.0 < b.0 { (a.0, b.0) } else { (b.0, a.0) };
                 false_positives.insert(pair);
-            }
-        }
-    }
-}
 
-fn collect_false_positives_debug(
-    genome: &str,
-    seqid: &str,
-    markers: &[(usize, char)],
-    blocks: &Blocks,
-    breakpoints_signed: &HashSet<((usize, char), (usize, char))>,
-    breakpoints: &HashSet<(usize, usize)>,
-    false_positives: &mut HashSet<(usize, usize)>,
-    other_genome: &str,
-    other_seqid: &str,
-    debug_info: &mut Vec<FalsePositiveDebugInfo>,
-) {
-    for (i, window) in markers.windows(2).enumerate() {
-        let a = window[0];
-        let b = window[1];
-        if breakpoints_signed.contains(&canonical_signed_adjacency((a, b))) {
-            let block_x = &blocks[i];
-            let block_y = &blocks[i + 1];
-            let mut is_false_positive = true;
-            'outer: for &(x, _) in block_x {
-                for &(y, _) in block_y {
-                    let pair = if x < y { (x, y) } else { (y, x) };
-                    if breakpoints.contains(&pair) {
-                        is_false_positive = false;
-                        break 'outer;
-                    }
-                }
-            }
-            if is_false_positive {
-                let pair = if a.0 < b.0 { (a.0, b.0) } else { (b.0, a.0) };
-                let inserted = false_positives.insert(pair);
-
-                if inserted {
-                    debug_info.push(FalsePositiveDebugInfo {
-                        genome_a: genome.to_string(),
-                        seqid_a: seqid.to_string(),
-                        genome_b: other_genome.to_string(),
-                        seqid_b: other_seqid.to_string(),
+                if let Some((info, ctx)) = debug.as_mut() {
+                    info.push(FalsePositiveDebugInfo {
+                        genome_a: ctx.genome_a.to_string(),
+                        seqid_a: ctx.seqid_a.to_string(),
+                        genome_b: ctx.genome_b.to_string(),
+                        seqid_b: ctx.seqid_b.to_string(),
                         marker_a: a,
                         marker_b: b,
                         block_a: block_x.clone(),
