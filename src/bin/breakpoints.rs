@@ -136,7 +136,9 @@ fn run_two_gffs(
 
     let false_positives = compute_false_positive_breakpoints(&genomes_new, &genomes_new_blocks, &breakpoints);
 
-    eprintln!("{}", false_positives.len());
+    for (a, b) in &false_positives {
+        println!("{a} {b}");
+    }
 
     Ok(())
 }
@@ -208,7 +210,8 @@ fn collect_false_positives(
                 }
             }
             if is_false_positive {
-                false_positives.insert((a.0, b.0));
+                let pair = if a.0 < b.0 { (a.0, b.0) } else { (b.0, a.0) };
+                false_positives.insert(pair);
             }
         }
     }
