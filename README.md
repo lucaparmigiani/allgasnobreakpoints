@@ -1,6 +1,6 @@
 # All Gas No Breakpoints!
 
-Utiliy tools to extract statics from GFF files regarding rearrangements/breakpoints. 
+Utility tools to extract statics from GFF files regarding rearrangements/breakpoints. 
 
 ## Install
 
