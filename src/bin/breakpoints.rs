@@ -14,10 +14,10 @@ struct FalsePositiveDebugInfo {
     seqid_a: String,
     genome_b: String,
     seqid_b: String,
-    marker_a: (usize, char),
-    marker_b: (usize, char),
-    block_a: Vec<(usize, char)>,
-    block_b: Vec<(usize, char)>,
+    marker_x: (usize, char),
+    marker_y: (usize, char),
+    block_x: Vec<(usize, char)>,
+    block_y: Vec<(usize, char)>,
 }
 
 struct DebugContext<'a> {
@@ -186,22 +186,22 @@ fn print_false_positives_debug(
     out: &mut io::BufWriter<io::StdoutLock>,
 ) -> Result<()> {
     for info in debug_info {
-        writeln!(out, "# False positive breakpoint between markers {} and {}", info.marker_a.0, info.marker_b.0)?;
+        writeln!(out, "# False positive breakpoint between markers {} and {}", info.marker_x.0, info.marker_y.0)?;
         writeln!(out, "# Genomes: {} (seqid: {}) <-> {} (seqid: {})",
             info.genome_a, info.seqid_a, info.genome_b, info.seqid_b)?;
         write!(out, "# Block A: [")?;
-        for (i, (id, strand)) in info.block_a.iter().enumerate() {
+        for (i, (id, strand)) in info.block_x.iter().enumerate() {
             if i > 0 { write!(out, ", ")?; }
             write!(out, "{}{}", id, strand)?;
         }
         writeln!(out, "]")?;
         write!(out, "# Block B: [")?;
-        for (i, (id, strand)) in info.block_b.iter().enumerate() {
+        for (i, (id, strand)) in info.block_y.iter().enumerate() {
             if i > 0 { write!(out, ", ")?; }
             write!(out, "{}{}", id, strand)?;
         }
         writeln!(out, "]")?;
-        writeln!(out, "{} {}", info.marker_a.0, info.marker_b.0)?;
+        writeln!(out, "{} {}", info.marker_x.0, info.marker_y.0)?;
         writeln!(out)?;
     }
     Ok(())
@@ -323,9 +323,9 @@ fn collect_false_positives(
     mut debug: Option<(&mut Vec<FalsePositiveDebugInfo>, &DebugContext)>,
 ) {
     for (i, window) in markers.windows(2).enumerate() {
-        let a = window[0];
-        let b = window[1];
-        if breakpoints_signed.contains(&canonical_signed_adjacency((a, b))) {
+        let marker_x = window[0];
+        let marker_y = window[1];
+        if breakpoints_signed.contains(&canonical_signed_adjacency((marker_x, marker_y))) {
             let block_x = &blocks[i];
             let block_y = &blocks[i + 1];
             let mut is_false_positive = true;
@@ -339,7 +339,7 @@ fn collect_false_positives(
                 }
             }
             if is_false_positive {
-                let pair = if a.0 < b.0 { (a.0, b.0) } else { (b.0, a.0) };
+                let pair = if marker_x.0 < marker_y.0 { (marker_x.0, marker_y.0) } else { (marker_y.0, marker_x.0) };
                 false_positives.insert(pair);
 
                 if let Some((info, ctx)) = debug.as_mut() {
@@ -348,10 +348,10 @@ fn collect_false_positives(
                         seqid_a: ctx.seqid_a.to_string(),
                         genome_b: ctx.genome_b.to_string(),
                         seqid_b: ctx.seqid_b.to_string(),
-                        marker_a: a,
-                        marker_b: b,
-                        block_a: block_x.clone(),
-                        block_b: block_y.clone(),
+                        marker_x: marker_x,
+                        marker_y: marker_y,
+                        block_x: block_x.clone(),
+                        block_y: block_y.clone(),
                     });
                 }
             }
