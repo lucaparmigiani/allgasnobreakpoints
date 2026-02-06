@@ -38,6 +38,12 @@ enum Command {
         #[arg(long)]
         seqid2genome: Option<PathBuf>,
     },
+    IsDup {
+        file_gff: String,
+        id: usize,
+        #[arg(long)]
+        seqid2genome: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -48,6 +54,9 @@ fn main() -> Result<()> {
         Command::Dup { file_gff, seqid2genome } => dup(&file_gff, seqid2genome),
         Command::Find { file_gff, id, seqid, genome, seqid2genome } => {
             find(&file_gff, id, seqid, genome, seqid2genome)
+        }
+        Command::IsDup { file_gff, id, seqid2genome } => {
+            is_dup(&file_gff, id, seqid2genome)
         }
     }
 }
@@ -324,6 +333,48 @@ fn find(
         if seqid_matches && genome_matches {
             writeln!(out, "{}", line)?;
         }
+    }
+
+    Ok(())
+}
+
+fn is_dup(file_gff: &str, target_id: usize, seqid2genome: Option<PathBuf>) -> Result<()> {
+    let seqid_to_genome = match seqid2genome.as_ref() {
+        Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
+        None => None,
+    };
+
+    let (genomes, _seqid_to_genome_out) = load_genomes(file_gff, seqid_to_genome.as_ref(), false)
+        .with_context(|| "Failed to parse the GFF")?;
+
+    let mut genomes_with_dup: Vec<String> = Vec::new();
+
+    for (genome_name, seqs) in &genomes {
+        let mut count = 0;
+
+        for seq in seqs.values() {
+            for &(id, _) in &seq.markers {
+                if id == target_id {
+                    count += 1;
+                    if count > 1 {
+                        genomes_with_dup.push(genome_name.clone());
+                        break;
+                    }
+                }
+            }
+            if count > 1 {
+                break;
+            }
+        }
+    }
+
+    if !genomes_with_dup.is_empty() {
+        genomes_with_dup.sort();
+        let mut out = io::BufWriter::new(io::stdout().lock());
+        for genome in genomes_with_dup {
+            write!(out, " {}", genome)?;
+        }
+        writeln!(out)?;
     }
 
     Ok(())
