@@ -220,61 +220,43 @@ fn compute_false_positive_breakpoints(
         .flat_map(|i| ((i + 1)..n_genomes).map(move |j| (i, j)))
         .collect();
 
-    if debug {
-        let (false_positives, debug_info): (Vec<_>, Vec<_>) = pairs
-            .into_par_iter()
-            .map(|(i, j)| {
-                let mut local_false_positives: HashSet<(usize, usize)> = HashSet::new();
-                let mut local_debug_info: Vec<FalsePositiveDebugInfo> = Vec::new();
+    let (false_positives, debug_info): (Vec<_>, Vec<_>) = pairs
+        .into_par_iter()
+        .map(|(i, j)| {
+            let mut local_false_positives: HashSet<(usize, usize)> = HashSet::new();
+            let mut local_debug_info = if debug {
+                Some(Vec::new())
+            } else {
+                None
+            };
 
-                let genome_name_a = genome_names[i];
-                let genome_name_b = genome_names[j];
+            let genome_name_a = genome_names[i];
+            let genome_name_b = genome_names[j];
 
-                process_genome_pair(
-                    genome_name_a, genome_name_b,
-                    genomes_new, genomes_new_blocks, breakpoints,
-                    &mut local_false_positives, Some(&mut local_debug_info),
-                );
+            process_genome_pair(
+                genome_name_a, genome_name_b,
+                genomes_new, genomes_new_blocks, breakpoints,
+                &mut local_false_positives,
+                local_debug_info.as_mut(),
+            );
 
-                (local_false_positives, local_debug_info)
-            })
-            .unzip();
+            (local_false_positives, local_debug_info)
+        })
+        .unzip();
 
-        let combined_false_positives = false_positives.into_iter()
-            .fold(HashSet::new(), |mut acc, h| {
-                acc.extend(h);
-                acc
-            });
+    let combined_false_positives = false_positives.into_iter()
+        .fold(HashSet::new(), |mut acc, h| {
+            acc.extend(h);
+            acc
+        });
 
-        let combined_debug_info = debug_info.into_iter()
-            .flatten()
-            .collect();
-
-        (combined_false_positives, Some(combined_debug_info))
+    let combined_debug_info = if debug {
+        Some(debug_info.into_iter().flatten().flatten().collect())
     } else {
-        let false_positives = pairs
-            .into_par_iter()
-            .map(|(i, j)| {
-                let mut local_false_positives: HashSet<(usize, usize)> = HashSet::new();
+        None
+    };
 
-                let genome_name_a = genome_names[i];
-                let genome_name_b = genome_names[j];
-
-                process_genome_pair(
-                    genome_name_a, genome_name_b,
-                    genomes_new, genomes_new_blocks, breakpoints,
-                    &mut local_false_positives, None,
-                );
-
-                local_false_positives
-            })
-            .reduce(HashSet::new, |mut acc, h| {
-                acc.extend(h);
-                acc
-            });
-
-        (false_positives, None)
-    }
+    (combined_false_positives, combined_debug_info)
 }
 
 fn process_genome_pair(
