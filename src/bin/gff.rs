@@ -28,6 +28,16 @@ enum Command {
         #[arg(long)]
         seqid2genome: Option<PathBuf>,
     },
+    Find {
+        file_gff: String,
+        id: usize,
+        #[arg(long, conflicts_with = "genome")]
+        seqid: Option<String>,
+        #[arg(long, conflicts_with = "seqid")]
+        genome: Option<String>,
+        #[arg(long)]
+        seqid2genome: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -36,6 +46,9 @@ fn main() -> Result<()> {
         Command::Info { file_gff } => info(&file_gff),
         Command::Seq { file_gff, seqid2genome } => seq(&file_gff, seqid2genome),
         Command::Dup { file_gff, seqid2genome } => dup(&file_gff, seqid2genome),
+        Command::Find { file_gff, id, seqid, genome, seqid2genome } => {
+            find(&file_gff, id, seqid, genome, seqid2genome)
+        }
     }
 }
 
@@ -243,6 +256,76 @@ fn write_genomes(genomes: &mut Genomes) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+fn find(
+    file_gff: &str,
+    target_id: usize,
+    seqid_filter: Option<String>,
+    genome_filter: Option<String>,
+    seqid2genome: Option<PathBuf>,
+) -> Result<()> {
+    let seqid_to_genome = match seqid2genome.as_ref() {
+        Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
+        None => None,
+    };
+
+    let fh = File::open(file_gff).with_context(|| format!("Opening {file_gff}"))?;
+    let br = BufReader::new(fh);
+    let mut out = io::BufWriter::new(io::stdout().lock());
+
+    for (i, line) in br.lines().enumerate() {
+        let line = line.with_context(|| format!("Reading {file_gff}, line {i}"))?;
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let cols: Vec<&str> = line.split('\t').collect();
+        if cols.len() < 9 {
+            continue;
+        }
+
+        let seqid = cols[0];
+        let attributes = cols[8];
+
+        // Parse attributes to get ID and genome
+        let mut id: Option<usize> = None;
+        let mut genome: Option<String> = None;
+
+        for field in attributes.split(';') {
+            if let Some(rest) = field.strip_prefix("ID=") {
+                if let Ok(parsed_id) = rest.parse::<usize>() {
+                    id = Some(parsed_id);
+                }
+            } else if let Some(rest) = field.strip_prefix("genome=") {
+                genome = Some(rest.to_string());
+            }
+        }
+
+        // If no genome in GFF, try to get it from seqid2genome mapping
+        if genome.is_none() {
+            if let Some(ref map) = seqid_to_genome {
+                genome = map.get(seqid).cloned();
+            }
+        }
+
+        // Check if this line matches our criteria
+        let id_matches = id == Some(target_id);
+        if !id_matches {
+            continue;
+        }
+
+        let seqid_matches = seqid_filter.as_ref().map_or(true, |filter| seqid == filter);
+        let genome_matches = genome_filter.as_ref().map_or(true, |filter| {
+            genome.as_ref().map_or(false, |g| g == filter)
+        });
+
+        if seqid_matches && genome_matches {
+            writeln!(out, "{}", line)?;
+        }
+    }
+
     Ok(())
 }
 
