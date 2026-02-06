@@ -37,8 +37,16 @@ fn main() -> Result<()> {
     }
 
     for (genome, seqids) in genome_to_seqids {
-        let joined = seqids.into_iter().collect::<Vec<_>>().join(",");
-        println!("{genome}: {joined}");
+        print!("{genome}: ");
+        let mut first = true;
+        for seqid in seqids.iter(){
+            if !first {
+                print!(",");
+            }
+            first = false;
+            print!("{seqid}");
+        }
+        println!();
     }
 
     Ok(())

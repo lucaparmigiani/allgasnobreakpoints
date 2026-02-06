@@ -22,8 +22,8 @@ chr1  .  SO:0000856  1000  2000  .  +  .  ID=42;genome=species_A
 
 Mapping files look like:
 ```
-genome_A: chr1, chr2, chr3
-genome_B: scaffold_1, scaffold_2
+genome_A: chr1,chr2,chr3
+genome_B: scaffold_1,scaffold_2
 ```
 
 ## Tools
