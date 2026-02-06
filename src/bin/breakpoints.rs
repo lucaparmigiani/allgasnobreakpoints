@@ -69,8 +69,9 @@ fn run_single_gff(
 
     let breakpoints = compute_breakpoints(&seqs);
 
+    let mut out = io::BufWriter::new(io::stdout().lock());
     for (a, b) in &breakpoints {
-        println!("{a} {b}");
+        writeln!(out, "{a} {b}")?;
     }
 
     Ok(())
@@ -136,8 +137,9 @@ fn run_two_gffs(
 
     let false_positives = compute_false_positive_breakpoints(&genomes_new, &genomes_new_blocks, &breakpoints);
 
+    let mut out = io::BufWriter::new(io::stdout().lock());
     for (a, b) in &false_positives {
-        println!("{a} {b}");
+        writeln!(out, "{a} {b}")?;
     }
 
     Ok(())
