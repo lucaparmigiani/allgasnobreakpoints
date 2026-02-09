@@ -44,6 +44,10 @@ enum Command {
         #[arg(long)]
         seqid2genome: Option<PathBuf>,
     },
+    Sample {
+        file_gff: String,
+        n: usize,
+    },
 }
 
 fn main() -> Result<()> {
@@ -58,15 +62,26 @@ fn main() -> Result<()> {
         Command::IsDup { file_gff, id, seqid2genome } => {
             is_dup(&file_gff, id, seqid2genome)
         }
+        Command::Sample { file_gff, n } => {
+            sample(&file_gff, n)
+        }
     }
 }
 
 fn info(path: &str) -> Result<()> {
     let stats = scan_gff(path).with_context(|| "Failed to parse the GFF")?;
 
+    println!("data_lines: {}", stats.data_lines);
     println!("genomes: {}", stats.genomes.len());
     println!("seqids: {}", stats.seqids.len());
     println!("types_count: {}", stats.types.len());
+    println!("sorted_by_start: {}", stats.sorted_by_start);
+    println!("genomes_contiguous: {}", stats.genomes_contiguous);
+    println!("seqid_multi_genome: {}", stats.seqid_multi_genome);
+    println!("seqid_multi_genome_count: {}", stats.seqid_multi_genome_count);
+    println!("missing_genome: {}", stats.missing_genome_count);
+    println!("missing_id: {}", stats.missing_id_count);
+    println!("malformed_lines: {}", stats.malformed_lines);
     println!("unique_genomes: {}", join_sorted(&stats.genomes));
     println!("unique_seqids: {}", join_sorted(&stats.seqids));
     println!("types: {}", join_sorted(&stats.types));
@@ -81,19 +96,6 @@ fn info(path: &str) -> Result<()> {
             .map(|s| s.len())
             .unwrap_or(0);
         println!("{genome}\t{count}");
-    }
-
-    println!("sorted_by_start: {}", stats.sorted_by_start);
-    println!("genomes_contiguous: {}", stats.genomes_contiguous);
-    println!("seqid_multi_genome: {}", stats.seqid_multi_genome);
-    if stats.seqid_multi_genome_count > 0 {
-        println!("seqid_multi_genome_count: {}", stats.seqid_multi_genome_count);
-    }
-
-    if stats.missing_genome_count > 0 || stats.missing_id_count > 0 || stats.malformed_lines > 0 {
-        println!("missing_genome: {}", stats.missing_genome_count);
-        println!("missing_id: {}", stats.missing_id_count);
-        println!("malformed_lines: {}", stats.malformed_lines);
     }
 
     Ok(())
@@ -111,6 +113,7 @@ struct InfoStats {
     malformed_lines: u64,
     seqid_multi_genome: bool,
     seqid_multi_genome_count: u64,
+    data_lines: u64,
 }
 
 fn scan_gff(path: &str) -> Result<InfoStats> {
@@ -131,12 +134,14 @@ fn scan_gff(path: &str) -> Result<InfoStats> {
     let mut missing_id_count = 0u64;
     let mut malformed_lines = 0u64;
     let mut seqid_genomes: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut data_lines = 0u64;
 
     for (i, line) in br.lines().enumerate() {
         let line = line.with_context(|| format!("Reading {path}, line {i}"))?;
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
+        data_lines += 1;
         let cols: Vec<&str> = line.split('\t').collect();
         if cols.len() < 9 {
             malformed_lines += 1;
@@ -218,6 +223,7 @@ fn scan_gff(path: &str) -> Result<InfoStats> {
         malformed_lines,
         seqid_multi_genome: seqid_multi_genome_count(&seqid_genomes) > 0,
         seqid_multi_genome_count: seqid_multi_genome_count(&seqid_genomes),
+        data_lines,
     })
 }
 
@@ -332,6 +338,57 @@ fn find(
 
         if seqid_matches && genome_matches {
             writeln!(out, "{}", line)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn sample(file_gff: &str, n: usize) -> Result<()> {
+    use rand::seq::index::sample as random_sample;
+
+    // First pass: count data lines (fast - no allocations)
+    let fh = File::open(file_gff).with_context(|| format!("Opening {file_gff}"))?;
+    let br = BufReader::new(fh);
+
+    let mut total_data_lines = 0usize;
+    for line in br.split(b'\n') {
+        let line = line?;
+        if !line.starts_with(b"#") && !line.is_empty() {
+            total_data_lines += 1;
+        }
+    }
+
+    let sample_size = n.min(total_data_lines);
+    let mut rng = rand::thread_rng();
+
+    let mut selected_indices: Vec<usize> = random_sample(&mut rng, total_data_lines, sample_size)
+        .into_iter()
+        .collect();
+    selected_indices.sort_unstable();
+
+    // Second pass: output headers and selected data lines
+    let fh = File::open(file_gff)?;
+    let br = BufReader::new(fh);
+    let mut out = io::BufWriter::new(io::stdout().lock());
+
+    let mut data_line_idx = 0usize;
+    let mut next_idx_pos = 0usize;
+
+    for line in br.split(b'\n') {
+        let line = line?;
+
+        if line.starts_with(b"#") {
+            out.write_all(&line)?;
+            out.write_all(b"\n")?;
+        } else if !line.is_empty() {
+            // Check if this is the next line we want
+            if next_idx_pos < selected_indices.len() && data_line_idx == selected_indices[next_idx_pos] {
+                out.write_all(&line)?;
+                out.write_all(b"\n")?;
+                next_idx_pos += 1;
+            }
+            data_line_idx += 1;
         }
     }
 
