@@ -41,6 +41,9 @@ struct Args {
     breakpoints: Option<PathBuf>,
     #[arg(long)]
     debug: bool,
+    /// When comparing two GFFs, add new breakpoints formed by the new blocks on top of the original ones
+    #[arg(long)]
+    add_new_breakpoints: bool,
 }
 
 fn main() -> Result<()> {
@@ -58,6 +61,9 @@ fn main() -> Result<()> {
     };
 
     if args.file_gff.len() == 1 {
+        if args.add_new_breakpoints {
+            return Err(anyhow!("--add-new-breakpoints can only be used when comparing two GFF files"));
+        }
         run_single_gff(&args.file_gff[0], seqid_to_genome.as_ref(), args.no_dup)
     } else {
         if !args.no_dup {
@@ -69,6 +75,7 @@ fn main() -> Result<()> {
             seqid_to_genome.as_ref(),
             args.breakpoints.as_ref(),
             args.debug,
+            args.add_new_breakpoints,
         )
     }
 }
@@ -105,6 +112,7 @@ fn run_two_gffs(
     seqid_to_genome: Option<&HashMap<String, String>>,
     breakpoints_file: Option<&PathBuf>,
     debug: bool,
+    add_new_breakpoints: bool,
 ) -> Result<()> {
     let (mut genomes_original, seqid_to_genome) =
         load_genomes(file_gff_original, seqid_to_genome, true)
@@ -158,7 +166,7 @@ fn run_two_gffs(
 
     //print_genomes_new_blocks(&genomes_new_blocks)?;
 
-    let (false_positives, debug_info) = compute_false_positive_breakpoints(&genomes_new, &genomes_new_blocks, &breakpoints, debug);
+    let (false_positives, debug_info) = compute_false_positive_breakpoints(&genomes_new, &genomes_new_blocks, &breakpoints, debug, add_new_breakpoints);
 
     let mut out = io::BufWriter::new(io::stdout().lock());
 
@@ -212,6 +220,7 @@ fn compute_false_positive_breakpoints(
     genomes_new_blocks: &GenomesBlocks,
     breakpoints: &HashSet<(usize, usize)>,
     debug: bool,
+    add_new_breakpoints: bool,
 ) -> (HashSet<(usize, usize)>, Option<Vec<FalsePositiveDebugInfo>>) {
     let genome_names: Vec<&String> = genomes_new.keys().collect();
     let n_genomes = genome_names.len();
@@ -238,6 +247,7 @@ fn compute_false_positive_breakpoints(
                 genomes_new, genomes_new_blocks, breakpoints,
                 &mut local_false_positives,
                 local_debug_info.as_mut(),
+                add_new_breakpoints,
             );
 
             (local_false_positives, local_debug_info)
@@ -267,6 +277,7 @@ fn process_genome_pair(
     breakpoints: &HashSet<(usize, usize)>,
     false_positives: &mut HashSet<(usize, usize)>,
     mut debug_info: Option<&mut Vec<FalsePositiveDebugInfo>>,
+    add_new_breakpoints: bool,
 ) {
     let seqs_a = &genomes_new[genome_name_a];
     let seqs_b = &genomes_new[genome_name_b];
@@ -282,6 +293,26 @@ fn process_genome_pair(
 
             let breakpoints_signed = breakpoints_from_pair_of_seq(&seq_a.markers, &seq_b.markers);
 
+            let additional_breakpoints = if add_new_breakpoints {
+                let mut original_seq_a: Vec<(usize, char)> = Vec::new();
+                for block in blocks_seq_a.iter() {
+                    original_seq_a.extend(block);
+                }
+                let mut original_seq_b: Vec<(usize, char)> = Vec::new();
+                for block in blocks_seq_b.iter() {
+                    original_seq_b.extend(block);
+                }
+                let breakpoints_signed = breakpoints_from_pair_of_seq(&original_seq_a, &original_seq_b);
+                let mut extra = HashSet::new();
+                for ((a, _), (b, _)) in breakpoints_signed {
+                    let pair = if a < b { (a, b) } else { (b, a) };
+                    extra.insert(pair);
+                }
+                Some(extra)
+            } else {
+                None
+            };
+
             let ctx_a = DebugContext {
                 genome_a: genome_name_a,
                 seqid_a,
@@ -296,17 +327,19 @@ fn process_genome_pair(
             };
 
             let debug_a = debug_info.as_mut().map(|vec| (vec as &mut _, &ctx_a));
-            collect_false_positives(
+            collect_false_positives_with_breakpoints(
                 &seq_a.markers, blocks_seq_a,
                 &breakpoints_signed, breakpoints,
+                additional_breakpoints.as_ref(),
                 false_positives,
                 debug_a,
             );
 
             let debug_b = debug_info.as_mut().map(|vec| (vec as &mut _, &ctx_b));
-            collect_false_positives(
+            collect_false_positives_with_breakpoints(
                 &seq_b.markers, blocks_seq_b,
                 &breakpoints_signed, breakpoints,
+                additional_breakpoints.as_ref(),
                 false_positives,
                 debug_b,
             );
@@ -314,11 +347,12 @@ fn process_genome_pair(
     }
 }
 
-fn collect_false_positives(
+fn collect_false_positives_with_breakpoints(
     markers: &[(usize, char)],
     blocks: &Blocks,
     breakpoints_signed: &HashSet<((usize, char), (usize, char))>,
     breakpoints: &HashSet<(usize, usize)>,
+    additional_breakpoints: Option<&HashSet<(usize, usize)>>,
     false_positives: &mut HashSet<(usize, usize)>,
     mut debug: Option<(&mut Vec<FalsePositiveDebugInfo>, &DebugContext)>,
 ) {
@@ -332,7 +366,8 @@ fn collect_false_positives(
             'outer: for &(x, _) in block_x {
                 for &(y, _) in block_y {
                     let pair = if x < y { (x, y) } else { (y, x) };
-                    if breakpoints.contains(&pair) {
+                    if breakpoints.contains(&pair)
+                        || additional_breakpoints.map_or(false, |extra| extra.contains(&pair)) {
                         is_false_positive = false;
                         break 'outer;
                     }
@@ -462,7 +497,6 @@ fn breakpoints_from_pair_of_seq(seq_a: &[(usize, char)], seq_b: &[(usize, char)]
     let ids_a: HashSet<usize> = seq_a.iter().map(|(id, _)| *id).collect();
     let ids_b: HashSet<usize> = seq_b.iter().map(|(id, _)| *id).collect();
 
-    // Project sequences to common IDs
     let a_proj = project_common(seq_a, &ids_b);
     if a_proj.len() < 2 {
         return HashSet::new()
@@ -472,7 +506,6 @@ fn breakpoints_from_pair_of_seq(seq_a: &[(usize, char)], seq_b: &[(usize, char)]
         return HashSet::new()
     }
 
-    // Canonical adjacencies
     let p1_canon = canonical_adjacencies(&a_proj);
     let p2_canon = canonical_adjacencies(&b_proj);
 
@@ -487,7 +520,6 @@ fn breakpoints_from_pair_of_seq(seq_a: &[(usize, char)], seq_b: &[(usize, char)]
 fn compute_breakpoints(seqs: &[&Seq]) -> HashSet<(usize, usize)> {
     let n = seqs.len();
 
-    // Parallel over i; each thread builds a local HashSet and we reduce at the end.
     (0..n)
         .into_par_iter()
         .map(|i| {
