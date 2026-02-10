@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+use rayon::prelude::*;
 
 #[derive(Debug, Clone, Default)]
 pub struct Seq {
@@ -290,4 +291,67 @@ pub fn duplicated_ids_by_genome(
         }
     }
     dup_ids
+}
+
+pub fn compute_genome_blocks(
+    genomes_original: &Genomes,
+    genomes_new: &Genomes,
+) -> GenomesBlocks {
+    genomes_new
+        .par_iter()
+        .map(|(genome_name_new, seqid_table)| {
+            let genome_ori = &genomes_original[genome_name_new];
+            let seqid_blocks: HashMap<String, Vec<Vec<(usize, char)>>> = seqid_table
+                .par_iter()
+                .map(|(seqid_new, seq_new)| {
+                    let seq_ori = &genome_ori[seqid_new];
+                    let mut blocks = Vec::with_capacity(seq_new.len());
+                    let mut j = 0; //ori
+                    for i in 0..seq_new.len() {
+                        let mut contained = Vec::new();
+                        while j < seq_ori.len() && seq_new.starts[i] > seq_ori.starts[j] {
+                            j += 1;
+                        }
+                        while j < seq_ori.len() && seq_new.ends[i] >= seq_ori.ends[j] {
+                            contained.push(seq_ori.markers[j]);
+                            j += 1;
+                        }
+                        blocks.push(contained);
+                    }
+                    (seqid_new.clone(), blocks)
+                })
+                .collect();
+            (genome_name_new.clone(), seqid_blocks)
+        })
+        .collect()
+}
+
+pub fn compute_partition(genomes_new: &Genomes, genomes_new_blocks: &GenomesBlocks) 
+    -> Vec<HashSet<usize>> {
+    let mut max_n = 0;
+    for seqs in genomes_new.values() {
+        for seq in seqs.values() {
+            for (id, _) in seq.markers.iter() {
+                if *id > max_n {
+                    max_n = *id;
+                }
+            }
+        }
+    }
+    max_n += 1;
+    let mut partition: Vec<HashSet<usize>> = vec![HashSet::new(); max_n];
+
+    for (genome, seqs) in genomes_new.iter() {
+        let seqids_blocks = &genomes_new_blocks[genome];
+        for (seqid, seq) in seqs.iter() {
+            let blocks = &seqids_blocks[seqid];
+            for (i, (marker, _)) in seq.markers.iter().enumerate() {
+                let block = &blocks[i];
+                for (element_id, _) in block.iter() {
+                    partition[*marker].insert(*element_id);
+                }
+            }
+        }
+    }
+    partition
 }

@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use colored::Colorize;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
-use allgasnobreakpoints::gff::{load_genomes, load_seqid2genome, Genomes};
+use allgasnobreakpoints::gff::*;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -17,6 +18,8 @@ struct Cli {
 enum Command {
     Info {
         file_gff: String,
+        #[arg(long, short = 'a')]
+        all: bool,
     },
     Seq {
         file_gff: String,
@@ -48,12 +51,26 @@ enum Command {
         file_gff: String,
         n: usize,
     },
+    Block {
+        file_gff_original: String,
+        file_gff_new: String,
+        #[arg(long)]
+        seqid2genome: Option<PathBuf>,
+    },
+    Partition {
+        file_gff_original: String,
+        file_gff_new: String,
+        #[arg(long)]
+        seqid2genome: Option<PathBuf>,
+        #[arg(long)]
+        test: bool,
+    },
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Info { file_gff } => info(&file_gff),
+        Command::Info { file_gff, all} => info(&file_gff, all),
         Command::Seq { file_gff, seqid2genome } => seq(&file_gff, seqid2genome),
         Command::Dup { file_gff, seqid2genome } => dup(&file_gff, seqid2genome),
         Command::Find { file_gff, id, seqid, genome, seqid2genome } => {
@@ -65,37 +82,86 @@ fn main() -> Result<()> {
         Command::Sample { file_gff, n } => {
             sample(&file_gff, n)
         }
+        Command::Block { file_gff_original, file_gff_new, seqid2genome } => {
+            block(&file_gff_original, &file_gff_new, seqid2genome)
+        }
+        Command::Partition { file_gff_original, file_gff_new, seqid2genome, test } => {
+            partition(&file_gff_original, &file_gff_new, seqid2genome, test)
+        }
     }
 }
 
-fn info(path: &str) -> Result<()> {
+fn info(path: &str, all: bool) -> Result<()> {
     let stats = scan_gff(path).with_context(|| "Failed to parse the GFF")?;
 
-    println!("data_lines: {}", stats.data_lines);
-    println!("genomes: {}", stats.genomes.len());
-    println!("seqids: {}", stats.seqids.len());
-    println!("types_count: {}", stats.types.len());
-    println!("sorted_by_start: {}", stats.sorted_by_start);
-    println!("genomes_contiguous: {}", stats.genomes_contiguous);
-    println!("seqid_multi_genome: {}", stats.seqid_multi_genome);
-    println!("seqid_multi_genome_count: {}", stats.seqid_multi_genome_count);
-    println!("missing_genome: {}", stats.missing_genome_count);
-    println!("missing_id: {}", stats.missing_id_count);
-    println!("malformed_lines: {}", stats.malformed_lines);
-    println!("unique_genomes: {}", join_sorted(&stats.genomes));
-    println!("unique_seqids: {}", join_sorted(&stats.seqids));
-    println!("types: {}", join_sorted(&stats.types));
+    println!("{:<25} {}", "data_lines:", stats.data_lines);
+    println!("{:<25} {}", "genomes:", stats.genomes.len());
+    println!("{:<25} {}", "seqids:", stats.seqids.len());
+    println!("{:<25} {}", "types_count:", stats.types.len());
+    println!("{:<25} {}", "types:", join_sorted(&stats.types));
 
-    println!("seqids_per_genome:");
-    let mut genomes_sorted: Vec<String> = stats.seqids_per_genome.keys().cloned().collect();
-    genomes_sorted.sort();
-    for genome in genomes_sorted {
-        let count = stats
-            .seqids_per_genome
-            .get(&genome)
-            .map(|s| s.len())
-            .unwrap_or(0);
-        println!("{genome}\t{count}");
+    let sorted_status = if stats.sorted_by_start {
+        "true".green().to_string()
+    } else {
+        "false".red().to_string()
+    };
+    println!("{:<25} {}", "sorted_by_start:", sorted_status);
+
+    // genomes_contiguous is not applicable if any line is missing a genome
+    let contiguous_status = if stats.missing_genome_count > 0 {
+        "-".to_string()
+    } else if stats.genomes_contiguous {
+        "true".green().to_string()
+    } else {
+        "false".red().to_string()
+    };
+    println!("{:<25} {}", "genomes_contiguous:", contiguous_status);
+
+    // seqid_multi_genome is not applicable if all lines are missing genome
+    let seqid_multi = if stats.missing_genome_count == stats.data_lines {
+        "-".to_string()
+    } else if stats.seqid_multi_genome_count == 0 {
+        format!("{}", stats.seqid_multi_genome_count).green().to_string()
+    } else {
+        format!("{}", stats.seqid_multi_genome_count).red().to_string()
+    };
+    println!("{:<25} {}", "seqid_multi_genome:", seqid_multi);
+
+    let missing_genome = if stats.missing_genome_count == 0 {
+        format!("{}", stats.missing_genome_count).green().to_string()
+    } else {
+        format!("{}", stats.missing_genome_count).red().to_string()
+    };
+    println!("{:<25} {}", "missing_genome:", missing_genome);
+
+    let missing_id = if stats.missing_id_count == 0 {
+        format!("{}", stats.missing_id_count).green().to_string()
+    } else {
+        format!("{}", stats.missing_id_count).red().to_string()
+    };
+    println!("{:<25} {}", "missing_id:", missing_id);
+
+    let malformed = if stats.malformed_lines == 0 {
+        format!("{}", stats.malformed_lines).green().to_string()
+    } else {
+        format!("{}", stats.malformed_lines).red().to_string()
+    };
+    println!("{:<25} {}", "malformed_lines:", malformed);
+
+    if all {
+        println!("{:<25} {}", "unique_genomes:", join_sorted(&stats.genomes));
+        println!("{:<25} {}", "unique_seqids:", join_sorted(&stats.seqids));
+        println!("seqids_per_genome:");
+        let mut genomes_sorted: Vec<String> = stats.seqids_per_genome.keys().cloned().collect();
+        genomes_sorted.sort();
+        for genome in genomes_sorted {
+            let count = stats
+                .seqids_per_genome
+                .get(&genome)
+                .map(|s| s.len())
+                .unwrap_or(0);
+            println!("  {:<23} {}", genome, count);
+        }
     }
 
     Ok(())
@@ -111,7 +177,6 @@ struct InfoStats {
     missing_genome_count: u64,
     missing_id_count: u64,
     malformed_lines: u64,
-    seqid_multi_genome: bool,
     seqid_multi_genome_count: u64,
     data_lines: u64,
 }
@@ -221,7 +286,6 @@ fn scan_gff(path: &str) -> Result<InfoStats> {
         missing_genome_count,
         missing_id_count,
         malformed_lines,
-        seqid_multi_genome: seqid_multi_genome_count(&seqid_genomes) > 0,
         seqid_multi_genome_count: seqid_multi_genome_count(&seqid_genomes),
         data_lines,
     })
@@ -484,5 +548,128 @@ fn dup(file_gff: &str, seqid2genome: Option<PathBuf>) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn block(
+    file_gff_original: &str,
+    file_gff_new: &str,
+    seqid2genome: Option<PathBuf>,
+) -> Result<()> {
+    let seqid_to_genome = match seqid2genome.as_ref() {
+        Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
+        None => None,
+    };
+
+    let (genomes_original, seqid_to_genome) =
+        load_genomes(file_gff_original, seqid_to_genome.as_ref(), true)
+            .with_context(|| "Failed to parse the original GFF")?;
+
+    let (genomes_new, _seqid_to_genome) =
+        load_genomes(file_gff_new, Some(&seqid_to_genome), true)
+            .with_context(|| "Failed to parse the new GFF")?;
+
+    let genomes_new_blocks = compute_genome_blocks(&genomes_original, &genomes_new);
+
+    print_genomes_new_blocks(&genomes_new_blocks)?;
+
+    Ok(())
+}
+
+fn partition(
+    file_gff_original: &str,
+    file_gff_new: &str,
+    seqid2genome: Option<PathBuf>,
+    test: bool,
+) -> Result<()> {
+    let seqid_to_genome = match seqid2genome.as_ref() {
+        Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
+        None => None,
+    };
+
+    let (genomes_original, seqid_to_genome) =
+        load_genomes(file_gff_original, seqid_to_genome.as_ref(), true)
+            .with_context(|| "Failed to parse the original GFF")?;
+
+    let (genomes_new, _seqid_to_genome) =
+        load_genomes(file_gff_new, Some(&seqid_to_genome), true)
+            .with_context(|| "Failed to parse the new GFF")?;
+
+    let genomes_new_blocks = compute_genome_blocks(&genomes_original, &genomes_new);
+
+    let partition = compute_partition(&genomes_new, &genomes_new_blocks);
+    
+    let mut out = io::BufWriter::new(io::stdout().lock());
+
+    if test {
+        let mut reverse_map: HashMap<usize, HashSet<usize>> = HashMap::new();
+        for (new_marker_id, original_marker_ids) in partition.iter().enumerate() {
+            for &original_id in original_marker_ids {
+                reverse_map
+                    .entry(original_id)
+                    .or_insert_with(HashSet::new)
+                    .insert(new_marker_id);
+            }
+        }
+
+        let mut multi_partition_elements: Vec<usize> = reverse_map
+            .iter()
+            .filter(|(_, parts)| parts.len() > 1)
+            .map(|(&id, _)| id)
+            .collect();
+        multi_partition_elements.sort();
+
+        for original_id in multi_partition_elements {
+            if let Some(parts) = reverse_map.get(&original_id) {
+                write!(out, "{}->", original_id)?;
+                let mut sorted_parts: Vec<usize> = parts.iter().copied().collect();
+                sorted_parts.sort();
+                for part_id in sorted_parts {
+                    write!(out, " {}", part_id)?;
+                }
+                writeln!(out)?;
+            }
+        }
+    } else {
+        for (new_marker_id, original_marker_ids) in partition.iter().enumerate() {
+            if !original_marker_ids.is_empty() {
+                write!(out, "{}:", new_marker_id)?;
+                let mut sorted_ids: Vec<usize> = original_marker_ids.iter().copied().collect();
+                sorted_ids.sort();
+                for original_id in sorted_ids {
+                    write!(out, " {}", original_id)?;
+                }
+                writeln!(out)?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn print_genomes_new_blocks(genomes_new_blocks: &GenomesBlocks) -> Result<()> {
+    let mut out = io::BufWriter::new(io::stdout().lock());
+    let mut genome_names: Vec<String> = genomes_new_blocks.keys().cloned().collect();
+    genome_names.sort();
+    for genome in genome_names {
+        if let Some(seqs) = genomes_new_blocks.get(&genome) {
+            for (seqid, blocks) in seqs.iter() {
+                write!(out, "{genome}\t{seqid}\t")?;
+                for block in blocks {
+                    let mut first = true;
+                    write!(out, "[")?;
+                    for (id, strand) in block.iter() {
+                        if !first {
+                            out.write(b",")?;
+                        }
+                        first = false;
+                        write!(out, "{id}{strand}")?;
+                    }
+                    write!(out, "]")?;
+                }
+                out.write(b"\n")?;
+            }
+        }
+    }
     Ok(())
 }
