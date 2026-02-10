@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use clap::Parser;
+use clap::{Parser, Subcommand, ValueEnum};
 use std::fs::File;
 use std::io::{self, BufRead, BufReader, Write};
 use allgasnobreakpoints::gff::*;
@@ -27,23 +27,51 @@ struct DebugContext<'a> {
     seqid_b: &'a str,
 }
 
+#[derive(ValueEnum, Clone, Debug)]
+enum FnMode {
+    /// Compute false negatives from partition
+    Partition,
+    /// Compute false negatives from blocks
+    Blocks,
+}
+
 #[derive(Parser, Debug)]
-#[command(author, version, about, arg_required_else_help = true)]
+#[command(author, version, about)]
 struct Args {
-    /// GFF file(s). One file: compute breakpoints. Two files: compare original vs new.
-    #[arg(num_args = 1..=2)]
-    file_gff: Vec<String>,
-    #[arg(long)]
-    no_dup: bool,
-    #[arg(long)]
-    seqid2genome: Option<PathBuf>,
-    #[arg(long)]
-    breakpoints: Option<PathBuf>,
-    #[arg(long)]
-    debug: bool,
-    /// When comparing two GFFs, add new breakpoints formed by the new blocks on top of the original ones
-    #[arg(long)]
-    add_new_breakpoints: bool,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Compute breakpoints from a GFF
+    Compute {
+        file_gff: String,
+        #[arg(long)]
+        no_dup: bool,
+        #[arg(long)]
+        seqid2genome: Option<PathBuf>,
+    },
+    /// Evaluate synteny block construction
+    Synteny {
+        file_gff_original: String,
+        file_gff_blocks: String,
+        #[arg(long)]
+        seqid2genome: Option<PathBuf>,
+        #[arg(long)]
+        breakpoints: Option<PathBuf>,
+        /// Output folder name for results
+        #[arg(long, default_value = "synteny_check")]
+        output: String,
+        /// Method to compute false negatives: partition or blocks
+        #[arg(long, value_enum, default_value = "partition")]
+        fn_mode: FnMode,
+        #[arg(long)]
+        debug: bool,
+        /// Ignore new breakpoints formed by the new blocks (default: check them)
+        #[arg(long)]
+        ignore_new_breakpoints: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -55,28 +83,39 @@ fn main() -> Result<()> {
         .build_global()
         .unwrap();
 
-    let seqid_to_genome = match args.seqid2genome.as_ref() {
-        Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
-        None => None,
-    };
-
-    if args.file_gff.len() == 1 {
-        if args.add_new_breakpoints {
-            return Err(anyhow!("--add-new-breakpoints can only be used when comparing two GFF files"));
+    match args.command {
+        Command::Compute { file_gff, no_dup, seqid2genome } => {
+            let seqid_to_genome = match seqid2genome.as_ref() {
+                Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
+                None => None,
+            };
+            run_single_gff(&file_gff, seqid_to_genome.as_ref(), no_dup)
         }
-        run_single_gff(&args.file_gff[0], seqid_to_genome.as_ref(), args.no_dup)
-    } else {
-        if !args.no_dup {
-            return Err(anyhow!("--no-dup is required when comparing two GFF files"));
+        Command::Synteny {
+            file_gff_original,
+            file_gff_blocks,
+            seqid2genome,
+            breakpoints,
+            output,
+            fn_mode,
+            debug,
+            ignore_new_breakpoints,
+        } => {
+            let seqid_to_genome = match seqid2genome.as_ref() {
+                Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
+                None => None,
+            };
+            run_synteny(
+                &file_gff_original,
+                &file_gff_blocks,
+                seqid_to_genome.as_ref(),
+                breakpoints.as_ref(),
+                &output,
+                fn_mode,
+                debug,
+                ignore_new_breakpoints,
+            )
         }
-        run_two_gffs(
-            &args.file_gff[0],
-            &args.file_gff[1],
-            seqid_to_genome.as_ref(),
-            args.breakpoints.as_ref(),
-            args.debug,
-            args.add_new_breakpoints,
-        )
     }
 }
 
@@ -106,41 +145,31 @@ fn run_single_gff(
     Ok(())
 }
 
-fn run_two_gffs(
+fn run_synteny(
     file_gff_original: &str,
-    file_gff_new: &str,
+    file_gff_blocks: &str,
     seqid_to_genome: Option<&HashMap<String, String>>,
     breakpoints_file: Option<&PathBuf>,
+    output_folder: &str,
+    fn_mode: FnMode,
     debug: bool,
-    add_new_breakpoints: bool,
+    ignore_new_breakpoints: bool,
 ) -> Result<()> {
     let (mut genomes_original, seqid_to_genome) =
         load_genomes(file_gff_original, seqid_to_genome, true)
             .with_context(|| "Failed to parse the original GFF")?;
 
     let (mut genomes_new, _seqid_to_genome) =
-        load_genomes(file_gff_new, Some(&seqid_to_genome), true)
-            .with_context(|| "Failed to parse the new GFF")?;
+        load_genomes(file_gff_blocks, Some(&seqid_to_genome), true)
+            .with_context(|| "Failed to parse the blocks GFF")?;
 
     let dup_orig = duplicated_ids_by_genome(&genomes_original);
     remove_duplicates(&mut genomes_original, &dup_orig);
     eprintln!("duplicated (original): {}", dup_orig.len());
 
-    eprintln!(
-        "Loaded original: {} genome(s), {} sequence(s)",
-        genomes_original.len(),
-        genomes_original.values().map(|g| g.len()).sum::<usize>(),
-    );
-
-    let dup_new = duplicated_ids_by_genome(&genomes_new);
-    remove_duplicates(&mut genomes_new, &dup_new);
-    eprintln!("duplicated (new): {}", dup_new.len());
-
-    eprintln!(
-        "Loaded new: {} genome(s), {} sequence(s)",
-        genomes_new.len(),
-        genomes_new.values().map(|g| g.len()).sum::<usize>(),
-    );
+    let dup_markers = duplicated_ids_by_genome(&genomes_new);
+    remove_duplicates(&mut genomes_new, &dup_markers);
+    eprintln!("duplicated (markers): {}", dup_markers.len());
 
     let breakpoints: HashSet<(usize, usize)> = match breakpoints_file {
         Some(path) => {
@@ -164,34 +193,64 @@ fn run_two_gffs(
         genomes_new_blocks.values().map(|g| g.len()).sum::<usize>(),
     );
 
-    //print_genomes_new_blocks(&genomes_new_blocks)?;
+    std::fs::create_dir_all(output_folder)
+        .with_context(|| format!("Failed to create output directory: {}", output_folder))?;
 
-    let (false_positives, debug_info) = compute_false_positive_breakpoints(&genomes_new, &genomes_new_blocks, &breakpoints, debug, add_new_breakpoints);
+    //FP
+    let (false_positives, debug_info) = compute_false_positive_breakpoints(
+        &genomes_new,
+        &genomes_new_blocks,
+        &breakpoints,
+        debug,
+        !ignore_new_breakpoints,
+    );
 
-    let mut out = io::BufWriter::new(io::stdout().lock());
+    let fp_path = PathBuf::from(output_folder).join("false_positive.txt");
+    eprintln!("Writing false positives to: {:?}", fp_path);
+    let fp_file = File::create(&fp_path)
+        .with_context(|| format!("Failed to create file: {:?}", fp_path))?;
+    let mut fp_out = io::BufWriter::new(fp_file);
 
     if let Some(debug_info) = debug_info {
-        print_false_positives_debug(&debug_info, &mut out)?;
+        print_false_positives_debug(&debug_info, &mut fp_out)?;
     } else {
-        print_false_positives(&false_positives, &mut out)?;
+        for (a, b) in false_positives {
+            writeln!(fp_out, "{a} {b}")?;
+        }       
     }
+
+    //FN + TP
+    let false_negatives = compute_false_negative_breakpoints(
+        &genomes_new,
+        &genomes_new_blocks,
+        &breakpoints,
+        fn_mode,
+    );
+
+    let fn_path = PathBuf::from(output_folder).join("false_negative.txt");
+    let fn_file = File::create(&fn_path)
+        .with_context(|| format!("Failed to create file: {:?}", fn_path))?;
+    let mut fn_out = io::BufWriter::new(fn_file);
+    for (a, b) in false_negatives.iter() {
+        writeln!(fn_out, "{a} {b}")?;
+    }       
+
+    let tp_path = PathBuf::from(output_folder).join("true_positive.txt");
+    let tp_file = File::create(&tp_path)
+        .with_context(|| format!("Failed to create file: {:?}", tp_path))?;
+    let mut tp_out = io::BufWriter::new(tp_file);
+    for (a, b) in breakpoints {
+        if !false_negatives.contains(&(a,b)) {
+            writeln!(tp_out, "{a} {b}")?;
+        }
+    }       
 
     Ok(())
 }
 
-fn print_false_positives(
-    false_positives: &HashSet<(usize, usize)>,
-    out: &mut io::BufWriter<io::StdoutLock>,
-) -> Result<()> {
-    for (a, b) in false_positives {
-        writeln!(out, "{a} {b}")?;
-    }
-    Ok(())
-}
-
-fn print_false_positives_debug(
+fn print_false_positives_debug<W: Write>(
     debug_info: &[FalsePositiveDebugInfo],
-    out: &mut io::BufWriter<io::StdoutLock>,
+    out: &mut W,
 ) -> Result<()> {
     for info in debug_info {
         writeln!(out, "# False positive breakpoint between markers {} and {}", info.marker_x.0, info.marker_y.0)?;
@@ -213,6 +272,88 @@ fn print_false_positives_debug(
         writeln!(out)?;
     }
     Ok(())
+}
+
+fn compute_false_negative_breakpoints(
+    genomes_new: &Genomes,
+    genomes_new_blocks: &GenomesBlocks,
+    breakpoints: &HashSet<(usize, usize)>,
+    fn_mode: FnMode,
+) -> HashSet<(usize, usize)> {
+
+    match fn_mode {
+        FnMode::Partition => {
+            compute_false_negative_breakpoints_from_partition(genomes_new, genomes_new_blocks, breakpoints)
+        }
+        FnMode::Blocks => {
+            compute_false_negative_breakpoints_from_blocks(genomes_new_blocks, breakpoints)
+        }
+    }
+}
+
+fn compute_false_negative_breakpoints_from_partition(
+    genomes_new: &Genomes,
+    genomes_new_blocks: &GenomesBlocks,
+    breakpoints: &HashSet<(usize, usize)>,
+) -> HashSet<(usize, usize)> {
+
+    let partition = compute_partition(genomes_new, genomes_new_blocks);
+
+    let combined_false_negatives = partition
+        .into_par_iter()
+        .map(|part| {
+            let mut local_false_negatives = HashSet::new();
+            let part_vec: Vec<&usize> = part.iter().collect();
+            for i in 0..part_vec.len() {
+                  for j in (i + 1)..part_vec.len() {
+                      let a = *part_vec[i];
+                      let b = *part_vec[j];
+                      let pair = if a < b { (a, b) } else { (b, a) };
+                      if breakpoints.contains(&pair) {
+                          local_false_negatives.insert(pair);
+                      }
+                  }
+              }
+            local_false_negatives
+        })
+        .reduce(HashSet::new, |mut acc, h| {
+            acc.extend(h);
+            acc
+        });
+
+    combined_false_negatives
+}
+
+fn compute_false_negative_breakpoints_from_blocks(
+    genomes_new_blocks: &GenomesBlocks,
+    breakpoints: &HashSet<(usize, usize)>,
+) -> HashSet<(usize, usize)> {
+    let combined_false_negatives = genomes_new_blocks
+        .par_iter()
+        .map(|(_, seqids_blocks)| {
+            let mut local_false_negatives = HashSet::new();
+            for blocks in seqids_blocks.values() {
+                for block in blocks {
+                    for i in 0..block.len() {
+                          for j in (i + 1)..block.len() {
+                              let (a, _) = block[i];
+                              let (b, _) = block[j];
+                              let pair = if a < b { (a, b) } else { (b, a) };
+                              if breakpoints.contains(&pair) {
+                                  local_false_negatives.insert(pair);
+                              }
+                          }
+                    }
+                }
+            }
+            local_false_negatives
+        })
+        .reduce(HashSet::new, |mut acc, h| {
+            acc.extend(h);
+            acc
+        });
+
+    combined_false_negatives
 }
 
 fn compute_false_positive_breakpoints(
@@ -392,67 +533,6 @@ fn collect_false_positives_with_breakpoints(
             }
         }
     }
-}
-
-#[allow(dead_code)]
-fn print_genomes_new_blocks(genomes_new_blocks: &GenomesBlocks) -> Result<()>{
-    let mut out = io::BufWriter::new(io::stdout().lock());
-    let mut genome_names: Vec<String> = genomes_new_blocks.keys().cloned().collect();
-    genome_names.sort();
-    for genome in genome_names {
-        if let Some(seqs) = genomes_new_blocks.get(&genome) {
-            for (seqid, blocks) in seqs.iter() {
-                write!(out, "{genome}\t{seqid}\t")?;
-                for block in blocks {
-                    let mut first = true;
-                    write!(out, "[")?;
-                    for (id, strand) in block.iter(){
-                        if !first {
-                            out.write(b",")?;
-                        }
-                        first = false;
-                        write!(out, "{id}{strand}")?;
-                    }
-                    write!(out, "]")?;
-                }
-                out.write(b"\n")?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn compute_genome_blocks(
-    genomes_original: &Genomes,
-    genomes_new: &Genomes,
-) -> GenomesBlocks {
-    genomes_new
-        .par_iter()
-        .map(|(genome_name_new, seqid_table)| {
-            let genome_ori = &genomes_original[genome_name_new];
-            let seqid_blocks: HashMap<String, Vec<Vec<(usize, char)>>> = seqid_table
-                .par_iter()
-                .map(|(seqid_new, seq_new)| {
-                    let seq_ori = &genome_ori[seqid_new];
-                    let mut blocks = Vec::with_capacity(seq_new.len());
-                    let mut j = 0; //ori
-                    for i in 0..seq_new.len() {
-                        let mut contained = Vec::new();
-                        while j < seq_ori.len() && seq_new.starts[i] > seq_ori.starts[j] {
-                            j += 1;
-                        }
-                        while j < seq_ori.len() && seq_new.ends[i] >= seq_ori.ends[j] {
-                            contained.push(seq_ori.markers[j]);
-                            j += 1;
-                        }
-                        blocks.push(contained);
-                    }
-                    (seqid_new.clone(), blocks)
-                })
-                .collect();
-            (genome_name_new.clone(), seqid_blocks)
-        })
-        .collect()
 }
 
 fn flip_element(t: (usize, char)) -> (usize, char) {
