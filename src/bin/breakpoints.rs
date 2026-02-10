@@ -62,7 +62,7 @@ enum Command {
         breakpoints: Option<PathBuf>,
         /// Output folder name for results
         #[arg(long, default_value = "synteny_check")]
-        output: String,
+        out: String,
         /// Method to compute false negatives: partition or blocks
         #[arg(long, value_enum, default_value = "partition")]
         fn_mode: FnMode,
@@ -96,7 +96,7 @@ fn main() -> Result<()> {
             file_gff_blocks,
             seqid2genome,
             breakpoints,
-            output,
+            out,
             fn_mode,
             debug,
             ignore_new_breakpoints,
@@ -110,7 +110,7 @@ fn main() -> Result<()> {
                 &file_gff_blocks,
                 seqid_to_genome.as_ref(),
                 breakpoints.as_ref(),
-                &output,
+                &out,
                 fn_mode,
                 debug,
                 ignore_new_breakpoints,
@@ -206,7 +206,6 @@ fn run_synteny(
     );
 
     let fp_path = PathBuf::from(output_folder).join("false_positive.txt");
-    eprintln!("Writing false positives to: {:?}", fp_path);
     let fp_file = File::create(&fp_path)
         .with_context(|| format!("Failed to create file: {:?}", fp_path))?;
     let mut fp_out = io::BufWriter::new(fp_file);
@@ -296,7 +295,7 @@ fn compute_false_negative_breakpoints_from_partition(
     genomes_new_blocks: &GenomesBlocks,
     breakpoints: &HashSet<(usize, usize)>,
 ) -> HashSet<(usize, usize)> {
-
+    eprintln!("Computing FP based on partition");
     let partition = compute_partition(genomes_new, genomes_new_blocks);
 
     let combined_false_negatives = partition
@@ -328,6 +327,7 @@ fn compute_false_negative_breakpoints_from_blocks(
     genomes_new_blocks: &GenomesBlocks,
     breakpoints: &HashSet<(usize, usize)>,
 ) -> HashSet<(usize, usize)> {
+    eprintln!("Computing FP based on blocks");
     let combined_false_negatives = genomes_new_blocks
         .par_iter()
         .map(|(_, seqids_blocks)| {
@@ -335,14 +335,14 @@ fn compute_false_negative_breakpoints_from_blocks(
             for blocks in seqids_blocks.values() {
                 for block in blocks {
                     for i in 0..block.len() {
-                          for j in (i + 1)..block.len() {
-                              let (a, _) = block[i];
-                              let (b, _) = block[j];
-                              let pair = if a < b { (a, b) } else { (b, a) };
-                              if breakpoints.contains(&pair) {
-                                  local_false_negatives.insert(pair);
-                              }
-                          }
+                        for j in (i + 1)..block.len() {
+                            let (a, _) = block[i];
+                            let (b, _) = block[j];
+                            let pair = if a < b { (a, b) } else { (b, a) };
+                            if breakpoints.contains(&pair) {
+                              local_false_negatives.insert(pair);
+                            }
+                        }
                     }
                 }
             }
