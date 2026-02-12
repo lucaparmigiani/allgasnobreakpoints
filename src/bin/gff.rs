@@ -64,6 +64,9 @@ enum Command {
         /// Remove duplicated markers from the new GFF
         #[arg(long)]
         no_dup_marker: bool,
+        /// Extend marker end coordinates by this many base pairs (default: 0)
+        #[arg(long, default_value = "0")]
+        extend: u64,
     },
     Partition {
         file_gff_original: String,
@@ -72,6 +75,9 @@ enum Command {
         seqid2genome: Option<PathBuf>,
         #[arg(long)]
         test: bool,
+        /// Extend marker end coordinates by this many base pairs (default: 0)
+        #[arg(long, default_value = "0")]
+        extend: u64,
     },
 }
 
@@ -90,11 +96,11 @@ fn main() -> Result<()> {
         Command::Sample { file_gff, n } => {
             sample(&file_gff, n)
         }
-        Command::Block { file_gff_original, file_gff_new, seqid2genome, no_dup_element, no_dup_marker } => {
-            block(&file_gff_original, &file_gff_new, seqid2genome, no_dup_element, no_dup_marker)
+        Command::Block { file_gff_original, file_gff_new, seqid2genome, no_dup_element, no_dup_marker, extend } => {
+            block(&file_gff_original, &file_gff_new, seqid2genome, no_dup_element, no_dup_marker, extend)
         }
-        Command::Partition { file_gff_original, file_gff_new, seqid2genome, test } => {
-            partition(&file_gff_original, &file_gff_new, seqid2genome, test)
+        Command::Partition { file_gff_original, file_gff_new, seqid2genome, test, extend } => {
+            partition(&file_gff_original, &file_gff_new, seqid2genome, test, extend)
         }
     }
 }
@@ -570,6 +576,7 @@ fn block(
     seqid2genome: Option<PathBuf>,
     no_dup_element: bool,
     no_dup_marker: bool,
+    extend: u64,
 ) -> Result<()> {
     let seqid_to_genome = match seqid2genome.as_ref() {
         Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
@@ -594,7 +601,7 @@ fn block(
         remove_duplicates(&mut genomes_new, &dup_new);
     }
 
-    let genomes_new_blocks = compute_genome_blocks(&genomes_original, &genomes_new);
+    let genomes_new_blocks = compute_genome_blocks(&genomes_original, &genomes_new, extend);
 
     print_genomes_new_blocks(&genomes_new_blocks)?;
 
@@ -606,6 +613,7 @@ fn partition(
     file_gff_new: &str,
     seqid2genome: Option<PathBuf>,
     test: bool,
+    extend: u64,
 ) -> Result<()> {
     let seqid_to_genome = match seqid2genome.as_ref() {
         Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
@@ -620,7 +628,7 @@ fn partition(
         load_genomes(file_gff_new, Some(&seqid_to_genome), true)
             .with_context(|| "Failed to parse the new GFF")?;
 
-    let genomes_new_blocks = compute_genome_blocks(&genomes_original, &genomes_new);
+    let genomes_new_blocks = compute_genome_blocks(&genomes_original, &genomes_new, extend);
 
     let partition = compute_partition(&genomes_new, &genomes_new_blocks);
     

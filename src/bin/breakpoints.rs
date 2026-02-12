@@ -71,6 +71,12 @@ enum Command {
         /// Ignore new breakpoints formed by the new blocks (default: check them)
         #[arg(long)]
         ignore_new_breakpoints: bool,
+        /// Extend marker end coordinates by this many base pairs (default: 0)
+        #[arg(long, default_value = "0")]
+        extend: u64,
+        /// Compute supporting elements to filter true positives
+        #[arg(long)]
+        supporting_elements: bool,
     },
 }
 
@@ -100,6 +106,8 @@ fn main() -> Result<()> {
             fn_mode,
             debug,
             ignore_new_breakpoints,
+            extend,
+            supporting_elements,
         } => {
             let seqid_to_genome = match seqid2genome.as_ref() {
                 Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
@@ -114,6 +122,8 @@ fn main() -> Result<()> {
                 fn_mode,
                 debug,
                 ignore_new_breakpoints,
+                extend,
+                supporting_elements,
             )
         }
     }
@@ -154,6 +164,8 @@ fn run_synteny(
     fn_mode: FnMode,
     debug: bool,
     ignore_new_breakpoints: bool,
+    extend: u64,
+    use_supporting_elements: bool,
 ) -> Result<()> {
     std::fs::create_dir_all(output_folder)
         .with_context(|| format!("Failed to create output directory: {}", output_folder))?;
@@ -186,15 +198,23 @@ fn run_synteny(
         load_genomes(file_gff_blocks, Some(&seqid_to_genome), true)
             .with_context(|| "Failed to parse the blocks GFF")?;
 
-    let genomes_new_blocks = compute_genome_blocks(&genomes_original, &genomes_new);
+    let genomes_new_blocks = compute_genome_blocks(&genomes_original, &genomes_new, extend);
     
     //FN 
-    let false_negatives = compute_false_negative_breakpoints(
+    let mut false_negatives = compute_false_negative_breakpoints(
         &genomes_new,
         &genomes_new_blocks,
         &breakpoints,
         fn_mode,
     );
+    if use_supporting_elements {
+        let supporting_elements = compute_supporting_elements(&genomes_new_blocks);
+        for (x,y) in breakpoints.iter() {
+            if !supporting_elements.contains(x) || !supporting_elements.contains(y){
+                false_negatives.insert((*x,*y));
+            }
+        }
+    }
 
     let fn_path = PathBuf::from(output_folder).join("false_negative.txt");
     let fn_file = File::create(&fn_path)
@@ -204,18 +224,23 @@ fn run_synteny(
         writeln!(fn_out, "{a} {b}")?;
     }       
     
-    //TP 1
-    let supporting_breakpoints_with_dup = compute_supporting_breakpoints(
-        &genomes_new,
-        &genomes_new_blocks,
-        &breakpoints);
+    //TP
+    let tp_path = PathBuf::from(output_folder).join("true_positive.txt");
+    let tp_file = File::create(&tp_path)
+        .with_context(|| format!("Failed to create file: {:?}", tp_path))?;
+    let mut tp_out = io::BufWriter::new(tp_file);
+    for (a, b) in breakpoints.iter() {
+        if !false_negatives.contains(&(*a,*b)) {
+            writeln!(tp_out, "{a} {b}")?;
+        }
+    }
 
     // FP
     let dup_markers = duplicated_ids_by_genome(&genomes_new);
     remove_duplicates(&mut genomes_new, &dup_markers);
     eprintln!("duplicated (markers): {}", dup_markers.len());
 
-    let genomes_new_blocks = compute_genome_blocks(&genomes_original, &genomes_new);
+    let genomes_new_blocks = compute_genome_blocks(&genomes_original, &genomes_new, extend);
 
     let (false_positives, debug_info) = compute_false_positive_breakpoints(
         &genomes_new,
@@ -238,107 +263,36 @@ fn run_synteny(
         }       
     }
 
-    // TP
-    let supporting_breakpoints = compute_supporting_breakpoints(
-        &genomes_new,
-        &genomes_new_blocks,
-        &breakpoints);
-
-    let tp_path = PathBuf::from(output_folder).join("true_positive.txt");
-    let tp_file = File::create(&tp_path)
-        .with_context(|| format!("Failed to create file: {:?}", tp_path))?;
-    let mut tp_out = io::BufWriter::new(tp_file);
-    eprintln!("Supporting breakpoints size {}", supporting_breakpoints.len());
-    for (a, b) in supporting_breakpoints.union(&supporting_breakpoints_with_dup) {
-        if !false_negatives.contains(&(*a,*b)) {
-            writeln!(tp_out, "{a} {b}")?;
-        }
-    }
-
     Ok(())
 }
 
-fn compute_supporting_breakpoints(
-    genomes_new: &Genomes,
+fn compute_supporting_elements(
     genomes_new_blocks: &GenomesBlocks,
-    breakpoints: &HashSet<(usize, usize)>,
-) -> HashSet<(usize, usize)> {
-    let genome_names: Vec<&String> = genomes_new_blocks.keys().collect();
-    let n_genomes = genome_names.len();
-
-    let pairs: Vec<(usize, usize)> = (0..n_genomes)
-        .flat_map(|i| (i..n_genomes).map(move |j| (i, j)))
-        .collect();
-
-    let supporting_breakpoints = pairs
-        .into_par_iter()
-        .map(|(i, j)| {
-            let mut local_supporting_breakpoints: HashSet<(usize, usize)> = HashSet::new();
-            let genome_name_a = genome_names[i];
-            let genome_name_b = genome_names[j];
-            let seqs_a = &genomes_new[genome_name_a];
-            let seqs_b = &genomes_new[genome_name_b];
-
-            let blocks_a = &genomes_new_blocks[genome_name_a];
-            let blocks_b = &genomes_new_blocks[genome_name_b];
-
-            for (seqid_a, seq_a) in seqs_a {
-                let blocks_seq_a = &blocks_a[seqid_a];
-
-                for (seqid_b, seq_b) in seqs_b {
-                    let blocks_seq_b = &blocks_b[seqid_b];
-
-                    let breakpoints_signed = breakpoints_from_pair_of_seq(&seq_a.markers, &seq_b.markers);
-
-                    let ids_a: HashSet<usize> = seq_a.markers.iter().map(|(id, _)| *id).collect();
-                    let ids_b: HashSet<usize> = seq_b.markers.iter().map(|(id, _)| *id).collect();
-                    let (seq_a_markers_prj, blocks_seq_a_prj) = project_common_with_blocks(&seq_a.markers, &blocks_seq_a, &ids_b);
-                    let (seq_b_markers_prj, blocks_seq_b_prj) = project_common_with_blocks(&seq_b.markers, &blocks_seq_b, &ids_a);
-
-                    collect_supporting_breakpoints(&seq_a_markers_prj, &blocks_seq_a_prj, &breakpoints_signed, breakpoints, &mut local_supporting_breakpoints);
-                    collect_supporting_breakpoints(&seq_b_markers_prj, &blocks_seq_b_prj, &breakpoints_signed, breakpoints, &mut local_supporting_breakpoints);
-                }
-            }
-
-            local_supporting_breakpoints
+) -> HashSet<usize> {
+    let supporting_elements = genomes_new_blocks
+        .par_iter()
+        .map(|(_genome_name, seqids_blocks)| {
+            seqids_blocks
+                .par_iter()
+                .map(|(_seqid, blocks)| {
+                    let mut local_supporting_elements = HashSet::new();
+                    for block in blocks {
+                        for (u, _) in block {
+                            local_supporting_elements.insert(*u);
+                        }
+                    }
+                    local_supporting_elements
+                })
+                .reduce(HashSet::new, |mut acc, h| {
+                    acc.extend(h);
+                    acc
+                })
         })
         .reduce(HashSet::new, |mut acc, h| {
             acc.extend(h);
             acc
         });
-
-    supporting_breakpoints
-}
-
-fn collect_supporting_breakpoints(
-    markers: &[(usize, char)],
-    blocks: &Blocks,
-    breakpoints_signed: &HashSet<((usize, char), (usize, char))>,
-    breakpoints: &HashSet<(usize, usize)>,
-    supporting_breakpoints: &mut HashSet<(usize, usize)>,
-) {
-    for (i, window) in markers.windows(2).enumerate() {
-        let marker_x = window[0];
-        let marker_y = window[1];
-        if breakpoints_signed.contains(&canonical_signed_adjacency((marker_x, marker_y))) {
-            let block_x = &blocks[i];
-            let block_y = &blocks[i + 1];
-            let (p,q) = canonical_signed_adjacency((marker_x, marker_y));
-            if (p.0,q.0) == (8155, 3354) || (p.0,q.0) == (3354, 8155){
-                eprintln!("here");
-                eprintln!("{:?}", block_x);
-                eprintln!("{:?}", block_y);
-            }
-            for &(x, _) in block_x {
-                for &(y, _) in block_y {
-                    let pair = if x < y { (x, y) } else { (y, x) };
-                    if breakpoints.contains(&pair) {
-                        supporting_breakpoints.insert(pair);
-                    }
-                }
-            }
-        }
-    }
+    supporting_elements
 }
 
 fn print_false_positives_debug<W: Write>(

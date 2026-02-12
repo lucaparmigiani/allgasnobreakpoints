@@ -296,6 +296,7 @@ pub fn duplicated_ids_by_genome(
 pub fn compute_genome_blocks(
     genomes_original: &Genomes,
     genomes_new: &Genomes,
+    extend: u64,
 ) -> GenomesBlocks {
     genomes_new
         .par_iter()
@@ -312,7 +313,8 @@ pub fn compute_genome_blocks(
                         while j < seq_ori.len() && seq_new.starts[i] > seq_ori.starts[j] {
                             j += 1;
                         }
-                        while j < seq_ori.len() && seq_new.ends[i] >= seq_ori.ends[j] {
+                        let extended_end = seq_new.ends[i] + extend;
+                        while j < seq_ori.len() && extended_end >= seq_ori.ends[j] {
                             contained.push(seq_ori.markers[j]);
                             j += 1;
                         }
