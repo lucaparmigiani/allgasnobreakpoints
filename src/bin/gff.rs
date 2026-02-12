@@ -25,6 +25,8 @@ enum Command {
         file_gff: String,
         #[arg(long)]
         seqid2genome: Option<PathBuf>,
+        #[arg(long)]
+        no_dup: bool,
     },
     Dup {
         file_gff: String,
@@ -56,6 +58,12 @@ enum Command {
         file_gff_new: String,
         #[arg(long)]
         seqid2genome: Option<PathBuf>,
+        /// Remove duplicated elements from the original GFF
+        #[arg(long)]
+        no_dup_element: bool,
+        /// Remove duplicated markers from the new GFF
+        #[arg(long)]
+        no_dup_marker: bool,
     },
     Partition {
         file_gff_original: String,
@@ -71,7 +79,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Info { file_gff, all} => info(&file_gff, all),
-        Command::Seq { file_gff, seqid2genome } => seq(&file_gff, seqid2genome),
+        Command::Seq { file_gff, seqid2genome, no_dup } => seq(&file_gff, seqid2genome, no_dup),
         Command::Dup { file_gff, seqid2genome } => dup(&file_gff, seqid2genome),
         Command::Find { file_gff, id, seqid, genome, seqid2genome } => {
             find(&file_gff, id, seqid, genome, seqid2genome)
@@ -82,8 +90,8 @@ fn main() -> Result<()> {
         Command::Sample { file_gff, n } => {
             sample(&file_gff, n)
         }
-        Command::Block { file_gff_original, file_gff_new, seqid2genome } => {
-            block(&file_gff_original, &file_gff_new, seqid2genome)
+        Command::Block { file_gff_original, file_gff_new, seqid2genome, no_dup_element, no_dup_marker } => {
+            block(&file_gff_original, &file_gff_new, seqid2genome, no_dup_element, no_dup_marker)
         }
         Command::Partition { file_gff_original, file_gff_new, seqid2genome, test } => {
             partition(&file_gff_original, &file_gff_new, seqid2genome, test)
@@ -301,7 +309,7 @@ fn join_sorted(set: &HashSet<String>) -> String {
     v.join(",")
 }
 
-fn seq(file_gff: &str, seqid2genome: Option<PathBuf>) -> Result<()> {
+fn seq(file_gff: &str, seqid2genome: Option<PathBuf>, no_dup: bool) -> Result<()> {
     let seqid_to_genome = match seqid2genome.as_ref() {
         Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
         None => None,
@@ -309,6 +317,11 @@ fn seq(file_gff: &str, seqid2genome: Option<PathBuf>) -> Result<()> {
 
     let (mut genomes, _seqid_to_genome_out) = load_genomes(file_gff, seqid_to_genome.as_ref(), true)
         .with_context(|| "Failed to parse the GFF")?;
+
+    if no_dup {
+        let dup_ids = duplicated_ids_by_genome(&genomes);
+        remove_duplicates(&mut genomes, &dup_ids);
+    }
 
     write_genomes(&mut genomes)?;
 
@@ -555,19 +568,31 @@ fn block(
     file_gff_original: &str,
     file_gff_new: &str,
     seqid2genome: Option<PathBuf>,
+    no_dup_element: bool,
+    no_dup_marker: bool,
 ) -> Result<()> {
     let seqid_to_genome = match seqid2genome.as_ref() {
         Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
         None => None,
     };
 
-    let (genomes_original, seqid_to_genome) =
+    let (mut genomes_original, seqid_to_genome) =
         load_genomes(file_gff_original, seqid_to_genome.as_ref(), true)
             .with_context(|| "Failed to parse the original GFF")?;
 
-    let (genomes_new, _seqid_to_genome) =
+    if no_dup_element {
+        let dup_orig = duplicated_ids_by_genome(&genomes_original);
+        remove_duplicates(&mut genomes_original, &dup_orig);
+    }
+
+    let (mut genomes_new, _seqid_to_genome) =
         load_genomes(file_gff_new, Some(&seqid_to_genome), true)
             .with_context(|| "Failed to parse the new GFF")?;
+
+    if no_dup_marker {
+        let dup_new = duplicated_ids_by_genome(&genomes_new);
+        remove_duplicates(&mut genomes_new, &dup_new);
+    }
 
     let genomes_new_blocks = compute_genome_blocks(&genomes_original, &genomes_new);
 
@@ -656,16 +681,18 @@ fn print_genomes_new_blocks(genomes_new_blocks: &GenomesBlocks) -> Result<()> {
             for (seqid, blocks) in seqs.iter() {
                 write!(out, "{genome}\t{seqid}\t")?;
                 for block in blocks {
-                    let mut first = true;
-                    write!(out, "[")?;
-                    for (id, strand) in block.iter() {
-                        if !first {
-                            out.write(b",")?;
+                    if !block.is_empty() {
+                        let mut first = true;
+                        write!(out, "[")?;
+                        for (id, strand) in block.iter() {
+                            if !first {
+                                out.write(b",")?;
+                            }
+                            first = false;
+                            write!(out, "{id}{strand}")?;
                         }
-                        first = false;
-                        write!(out, "{id}{strand}")?;
+                        write!(out, "]")?;
                     }
-                    write!(out, "]")?;
                 }
                 out.write(b"\n")?;
             }
