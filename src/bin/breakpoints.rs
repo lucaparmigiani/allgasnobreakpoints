@@ -229,8 +229,10 @@ fn run_synteny(
     let tp_file = File::create(&tp_path)
         .with_context(|| format!("Failed to create file: {:?}", tp_path))?;
     let mut tp_out = io::BufWriter::new(tp_file);
+    let mut true_positives_num = 0;
     for (a, b) in breakpoints.iter() {
         if !false_negatives.contains(&(*a,*b)) {
+            true_positives_num += 1;
             writeln!(tp_out, "{a} {b}")?;
         }
     }
@@ -258,10 +260,20 @@ fn run_synteny(
     if let Some(debug_info) = debug_info {
         print_false_positives_debug(&debug_info, &mut fp_out)?;
     } else {
-        for (a, b) in false_positives {
+        for (a, b) in false_positives.iter() {
             writeln!(fp_out, "{a} {b}")?;
-        }       
+        }
     }
+
+    let pr_path = PathBuf::from(output_folder).join("precision_recall.txt");
+    let pr_file = File::create(&pr_path)
+        .with_context(|| format!("Failed to create file: {:?}", pr_path))?;
+    let mut pr_out = io::BufWriter::new(pr_file);
+
+    let precision = true_positives_num as f64/((true_positives_num + false_positives.len()) as f64);
+    let recall = true_positives_num as f64/((true_positives_num + false_negatives.len()) as f64);
+    writeln!(pr_out, "precision {:.3}", precision)?;
+    writeln!(pr_out, "recall {:.3}", recall)?;
 
     Ok(())
 }
