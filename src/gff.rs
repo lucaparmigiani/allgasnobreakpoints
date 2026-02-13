@@ -319,6 +319,9 @@ pub fn compute_genome_blocks(
                             j += 1;
                         }
                         blocks.push(contained);
+                        while j > 0 && seq_new.starts[i] <= seq_ori.starts[j-1] {
+                            j -= 1;
+                        }
                     }
                     (seqid_new.clone(), blocks)
                 })
