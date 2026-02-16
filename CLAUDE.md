@@ -9,12 +9,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cargo build --release
 
 # Run a specific binary
-cargo run --release --bin breakpoints -- compute <gff_file> [--no-dup] [--seqid2genome <file>]
-cargo run --release --bin breakpoints -- synteny <original_gff> <blocks_gff> [--seqid2genome <file>] [--breakpoints <file>] [--output <folder>] [--extend <bp>] [--supporting-elements]
+cargo run --release --bin breakpoints -- compute <gff_file> [--no-dup] [--seqid2genome <file>] [--ignore-missing-genome]
+cargo run --release --bin breakpoints -- synteny <original_gff> <blocks_gff> [--seqid2genome <file>] [--breakpoints <file>] [--output <folder>] [--extend <bp>] [--supporting-elements] [--ignore-missing-genome]
 cargo run --release --bin gff -- info <gff_file> [-a]
-cargo run --release --bin gff -- seq <gff_file> [--seqid2genome <file>]
-cargo run --release --bin gff -- block <original_gff> <new_gff> [--seqid2genome <file>] [--extend <bp>]
-cargo run --release --bin gff -- partition <original_gff> <new_gff> [--seqid2genome <file>] [--extend <bp>]
+cargo run --release --bin gff -- seq <gff_file> [--seqid2genome <file>] [--ignore-missing-genome]
+cargo run --release --bin gff -- dup <gff_file> [--seqid2genome <file>] [--ignore-missing-genome]
+cargo run --release --bin gff -- is-dup <gff_file> <id> [--seqid2genome <file>] [--ignore-missing-genome]
+cargo run --release --bin gff -- block <original_gff> <new_gff> [--seqid2genome <file>] [--extend <bp>] [--ignore-missing-genome]
+cargo run --release --bin gff -- partition <original_gff> <new_gff> [--seqid2genome <file>] [--extend <bp>] [--ignore-missing-genome]
 cargo run --release --bin seqid2genome -- <inputs...>
 
 # Run tests
@@ -54,3 +56,7 @@ The breakpoint computation (`breakpoints.rs:compute_breakpoints`) uses canonical
 
 - **seqid2genome file**: `genome: seqid1, seqid2, ...` (one genome per line, colon-separated)
 - **GFF requirements**: Expects `ID=<int>` and optionally `genome=<name>` in attributes column; filters to type `SO:0000856`
+
+### Options
+
+- **--ignore-missing-genome**: When enabled, GFF records without genome attribution (either missing `genome=` attribute or not found in seqid2genome mapping) will be skipped with a warning instead of causing an error. Warnings are printed to stderr. This option is available for most commands that load GFF files (`breakpoints compute/synteny`, `gff seq/dup/is-dup/block/partition`).

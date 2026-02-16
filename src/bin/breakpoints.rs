@@ -51,6 +51,9 @@ enum Command {
         no_dup: bool,
         #[arg(long)]
         seqid2genome: Option<PathBuf>,
+        /// Ignore records without genome attribution instead of erroring
+        #[arg(long)]
+        ignore_missing_genome: bool,
     },
     /// Evaluate synteny block construction
     Synteny {
@@ -77,6 +80,9 @@ enum Command {
         /// Compute supporting elements to filter true positives
         #[arg(long)]
         supporting_elements: bool,
+        /// Ignore records without genome attribution instead of erroring
+        #[arg(long)]
+        ignore_missing_genome: bool,
     },
 }
 
@@ -90,12 +96,12 @@ fn main() -> Result<()> {
         .unwrap();
 
     match args.command {
-        Command::Compute { file_gff, no_dup, seqid2genome } => {
+        Command::Compute { file_gff, no_dup, seqid2genome, ignore_missing_genome } => {
             let seqid_to_genome = match seqid2genome.as_ref() {
                 Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
                 None => None,
             };
-            run_single_gff(&file_gff, seqid_to_genome.as_ref(), no_dup)
+            run_single_gff(&file_gff, seqid_to_genome.as_ref(), no_dup, ignore_missing_genome)
         }
         Command::Synteny {
             file_gff_original,
@@ -108,6 +114,7 @@ fn main() -> Result<()> {
             ignore_new_breakpoints,
             extend,
             supporting_elements,
+            ignore_missing_genome,
         } => {
             let seqid_to_genome = match seqid2genome.as_ref() {
                 Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
@@ -124,6 +131,7 @@ fn main() -> Result<()> {
                 ignore_new_breakpoints,
                 extend,
                 supporting_elements,
+                ignore_missing_genome,
             )
         }
     }
@@ -133,8 +141,9 @@ fn run_single_gff(
     file_gff: &str,
     seqid_to_genome: Option<&HashMap<String, String>>,
     no_dup: bool,
+    ignore_missing_genome: bool,
 ) -> Result<()> {
-    let (mut genomes, _seqid_to_genome_out) = load_genomes(file_gff, seqid_to_genome, true)
+    let (mut genomes, _seqid_to_genome_out) = load_genomes(file_gff, seqid_to_genome, true, ignore_missing_genome)
         .with_context(|| "Failed to parse the GFF")?;
 
     if no_dup {
@@ -166,13 +175,14 @@ fn run_synteny(
     ignore_new_breakpoints: bool,
     extend: u64,
     use_supporting_elements: bool,
+    ignore_missing_genome: bool,
 ) -> Result<()> {
     std::fs::create_dir_all(output_folder)
         .with_context(|| format!("Failed to create output directory: {}", output_folder))?;
 
     // Original genome
     let (mut genomes_original, seqid_to_genome) =
-        load_genomes(file_gff_original, seqid_to_genome, true)
+        load_genomes(file_gff_original, seqid_to_genome, true, ignore_missing_genome)
             .with_context(|| "Failed to parse the original GFF")?;
 
     let dup_orig = duplicated_ids_by_genome(&genomes_original);
@@ -195,7 +205,7 @@ fn run_synteny(
 
     // New genome
     let (mut genomes_new, _seqid_to_genome) =
-        load_genomes(file_gff_blocks, Some(&seqid_to_genome), true)
+        load_genomes(file_gff_blocks, Some(&seqid_to_genome), true, ignore_missing_genome)
             .with_context(|| "Failed to parse the blocks GFF")?;
 
     let genomes_new_blocks = compute_genome_blocks(&genomes_original, &genomes_new, extend);

@@ -133,6 +133,7 @@ pub fn load_genomes(
     path: &str,
     seqid_to_genome: Option<&HashMap<String, String>>,
     sort_by_seqid_start: bool,
+    ignore_missing_genome: bool,
 ) -> Result<(Genomes, HashMap<String, String>)> {
     let fh = File::open(path).with_context(|| format!("Opening {path}"))?;
     let br = BufReader::new(fh);
@@ -149,16 +150,26 @@ pub fn load_genomes(
                     if let Some(genome) = map.get(&r.seqid) {
                         r.genome = Some(genome.clone());
                     } else {
+                        if ignore_missing_genome {
+                            eprintln!("Warning: Missing genome= in GFF and no mapping for seqid {}, skipping record", r.seqid);
+                            continue;
+                        } else {
+                            return Err(anyhow!(
+                                "Missing genome= in GFF and no mapping for seqid {}",
+                                r.seqid
+                            ));
+                        }
+                    }
+                } else {
+                    if ignore_missing_genome {
+                        eprintln!("Warning: Missing genome= in GFF for seqid {}, skipping record", r.seqid);
+                        continue;
+                    } else {
                         return Err(anyhow!(
-                            "Missing genome= in GFF and no mapping for seqid {}",
+                            "Missing genome= in GFF for seqid {}. Please provide seqid2genome.",
                             r.seqid
                         ));
                     }
-                } else {
-                    return Err(anyhow!(
-                        "Missing genome= in GFF for seqid {}. Please provide seqid2genome.",
-                        r.seqid
-                    ));
                 }
             } else if let Some(map) = seqid_to_genome {
                 if let Some(mapped) = map.get(&r.seqid) {

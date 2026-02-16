@@ -27,11 +27,17 @@ enum Command {
         seqid2genome: Option<PathBuf>,
         #[arg(long)]
         no_dup: bool,
+        /// Ignore records without genome attribution instead of erroring
+        #[arg(long)]
+        ignore_missing_genome: bool,
     },
     Dup {
         file_gff: String,
         #[arg(long)]
         seqid2genome: Option<PathBuf>,
+        /// Ignore records without genome attribution instead of erroring
+        #[arg(long)]
+        ignore_missing_genome: bool,
     },
     Find {
         file_gff: String,
@@ -48,6 +54,9 @@ enum Command {
         id: usize,
         #[arg(long)]
         seqid2genome: Option<PathBuf>,
+        /// Ignore records without genome attribution instead of erroring
+        #[arg(long)]
+        ignore_missing_genome: bool,
     },
     Sample {
         file_gff: String,
@@ -67,6 +76,9 @@ enum Command {
         /// Extend marker end coordinates by this many base pairs (default: 0)
         #[arg(long, default_value = "0")]
         extend: u64,
+        /// Ignore records without genome attribution instead of erroring
+        #[arg(long)]
+        ignore_missing_genome: bool,
     },
     Partition {
         file_gff_original: String,
@@ -78,6 +90,9 @@ enum Command {
         /// Extend marker end coordinates by this many base pairs (default: 0)
         #[arg(long, default_value = "0")]
         extend: u64,
+        /// Ignore records without genome attribution instead of erroring
+        #[arg(long)]
+        ignore_missing_genome: bool,
     },
 }
 
@@ -85,22 +100,22 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Info { file_gff, all} => info(&file_gff, all),
-        Command::Seq { file_gff, seqid2genome, no_dup } => seq(&file_gff, seqid2genome, no_dup),
-        Command::Dup { file_gff, seqid2genome } => dup(&file_gff, seqid2genome),
+        Command::Seq { file_gff, seqid2genome, no_dup, ignore_missing_genome } => seq(&file_gff, seqid2genome, no_dup, ignore_missing_genome),
+        Command::Dup { file_gff, seqid2genome, ignore_missing_genome } => dup(&file_gff, seqid2genome, ignore_missing_genome),
         Command::Find { file_gff, id, seqid, genome, seqid2genome } => {
             find(&file_gff, id, seqid, genome, seqid2genome)
         }
-        Command::IsDup { file_gff, id, seqid2genome } => {
-            is_dup(&file_gff, id, seqid2genome)
+        Command::IsDup { file_gff, id, seqid2genome, ignore_missing_genome } => {
+            is_dup(&file_gff, id, seqid2genome, ignore_missing_genome)
         }
         Command::Sample { file_gff, n } => {
             sample(&file_gff, n)
         }
-        Command::Block { file_gff_original, file_gff_new, seqid2genome, no_dup_element, no_dup_marker, extend } => {
-            block(&file_gff_original, &file_gff_new, seqid2genome, no_dup_element, no_dup_marker, extend)
+        Command::Block { file_gff_original, file_gff_new, seqid2genome, no_dup_element, no_dup_marker, extend, ignore_missing_genome } => {
+            block(&file_gff_original, &file_gff_new, seqid2genome, no_dup_element, no_dup_marker, extend, ignore_missing_genome)
         }
-        Command::Partition { file_gff_original, file_gff_new, seqid2genome, test, extend } => {
-            partition(&file_gff_original, &file_gff_new, seqid2genome, test, extend)
+        Command::Partition { file_gff_original, file_gff_new, seqid2genome, test, extend, ignore_missing_genome } => {
+            partition(&file_gff_original, &file_gff_new, seqid2genome, test, extend, ignore_missing_genome)
         }
     }
 }
@@ -315,13 +330,13 @@ fn join_sorted(set: &HashSet<String>) -> String {
     v.join(",")
 }
 
-fn seq(file_gff: &str, seqid2genome: Option<PathBuf>, no_dup: bool) -> Result<()> {
+fn seq(file_gff: &str, seqid2genome: Option<PathBuf>, no_dup: bool, ignore_missing_genome: bool) -> Result<()> {
     let seqid_to_genome = match seqid2genome.as_ref() {
         Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
         None => None,
     };
 
-    let (mut genomes, _seqid_to_genome_out) = load_genomes(file_gff, seqid_to_genome.as_ref(), true)
+    let (mut genomes, _seqid_to_genome_out) = load_genomes(file_gff, seqid_to_genome.as_ref(), true, ignore_missing_genome)
         .with_context(|| "Failed to parse the GFF")?;
 
     if no_dup {
@@ -478,13 +493,13 @@ fn sample(file_gff: &str, n: usize) -> Result<()> {
     Ok(())
 }
 
-fn is_dup(file_gff: &str, target_id: usize, seqid2genome: Option<PathBuf>) -> Result<()> {
+fn is_dup(file_gff: &str, target_id: usize, seqid2genome: Option<PathBuf>, ignore_missing_genome: bool) -> Result<()> {
     let seqid_to_genome = match seqid2genome.as_ref() {
         Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
         None => None,
     };
 
-    let (genomes, _seqid_to_genome_out) = load_genomes(file_gff, seqid_to_genome.as_ref(), false)
+    let (genomes, _seqid_to_genome_out) = load_genomes(file_gff, seqid_to_genome.as_ref(), false, ignore_missing_genome)
         .with_context(|| "Failed to parse the GFF")?;
 
     let mut genomes_with_dup: Vec<String> = Vec::new();
@@ -520,13 +535,13 @@ fn is_dup(file_gff: &str, target_id: usize, seqid2genome: Option<PathBuf>) -> Re
     Ok(())
 }
 
-fn dup(file_gff: &str, seqid2genome: Option<PathBuf>) -> Result<()> {
+fn dup(file_gff: &str, seqid2genome: Option<PathBuf>, ignore_missing_genome: bool) -> Result<()> {
     let seqid_to_genome = match seqid2genome.as_ref() {
         Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
         None => None,
     };
 
-    let (genomes, _seqid_to_genome_out) = load_genomes(file_gff, seqid_to_genome.as_ref(), false)
+    let (genomes, _seqid_to_genome_out) = load_genomes(file_gff, seqid_to_genome.as_ref(), false, ignore_missing_genome)
         .with_context(|| "Failed to parse the GFF")?;
 
     let mut duplicates: HashMap<usize, Vec<String>> = HashMap::new();
@@ -577,6 +592,7 @@ fn block(
     no_dup_element: bool,
     no_dup_marker: bool,
     extend: u64,
+    ignore_missing_genome: bool,
 ) -> Result<()> {
     let seqid_to_genome = match seqid2genome.as_ref() {
         Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
@@ -584,7 +600,7 @@ fn block(
     };
 
     let (mut genomes_original, seqid_to_genome) =
-        load_genomes(file_gff_original, seqid_to_genome.as_ref(), true)
+        load_genomes(file_gff_original, seqid_to_genome.as_ref(), true, ignore_missing_genome)
             .with_context(|| "Failed to parse the original GFF")?;
 
     if no_dup_element {
@@ -593,7 +609,7 @@ fn block(
     }
 
     let (mut genomes_new, _seqid_to_genome) =
-        load_genomes(file_gff_new, Some(&seqid_to_genome), true)
+        load_genomes(file_gff_new, Some(&seqid_to_genome), true, ignore_missing_genome)
             .with_context(|| "Failed to parse the new GFF")?;
 
     if no_dup_marker {
@@ -614,6 +630,7 @@ fn partition(
     seqid2genome: Option<PathBuf>,
     test: bool,
     extend: u64,
+    ignore_missing_genome: bool,
 ) -> Result<()> {
     let seqid_to_genome = match seqid2genome.as_ref() {
         Some(path) => Some(load_seqid2genome(path).with_context(|| "Failed to read seqid2genome")?),
@@ -621,11 +638,11 @@ fn partition(
     };
 
     let (genomes_original, seqid_to_genome) =
-        load_genomes(file_gff_original, seqid_to_genome.as_ref(), true)
+        load_genomes(file_gff_original, seqid_to_genome.as_ref(), true, ignore_missing_genome)
             .with_context(|| "Failed to parse the original GFF")?;
 
     let (genomes_new, _seqid_to_genome) =
-        load_genomes(file_gff_new, Some(&seqid_to_genome), true)
+        load_genomes(file_gff_new, Some(&seqid_to_genome), true, ignore_missing_genome)
             .with_context(|| "Failed to parse the new GFF")?;
 
     let genomes_new_blocks = compute_genome_blocks(&genomes_original, &genomes_new, extend);
