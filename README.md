@@ -5,7 +5,7 @@ Utility tools to extract statics from GFF files regarding rearrangements/breakpo
 ## Install
 
 ```bash
-cargo install --release .
+cargo install --path .
 ```
 
 ## File formats
